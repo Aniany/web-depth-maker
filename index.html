@@ -838,11 +838,12 @@ function loadVideoFile(file) {
             detectVideoFps(file, inVideo.src).then(fps => {
                 if (fps) {
                     detectedFps = fps;
+                    const displayFps = Math.round(detectedFps); // 界面友好显示为整数 (如 60 FPS, 24 FPS)
                     const opt = $('fpsAutoOption');
-                    if (opt) opt.textContent = `保持原片帧率 (推荐, 已检测: ${detectedFps} FPS)`;
-                    chip.textContent = `${inVideo.videoWidth || 0}×${inVideo.videoHeight || 0} · ${d.toFixed(1)}秒 · ${detectedFps} FPS`;
+                    if (opt) opt.textContent = `保持原片帧率 (推荐, 已检测: ${displayFps} FPS)`;
+                    chip.textContent = `${inVideo.videoWidth || 0}×${inVideo.videoHeight || 0} · ${d.toFixed(1)}秒 · ${displayFps} FPS`;
                     updateRangeInfo();
-                    log(`原视频真实帧率已识别: ${detectedFps} FPS ✓`, 'ok');
+                    log(`原视频真实帧率已识别: ${displayFps} FPS (后台高精基准: ${detectedFps}) ✓`, 'ok');
                 }
             }).catch(() => {});
         }, 30);
