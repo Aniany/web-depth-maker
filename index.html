@@ -550,6 +550,13 @@
                         <option value="60">60 FPS (高刷源)</option>
                     </select>
                 </div>
+                <div class="row">
+                    <label class="t">保留音轨</label>
+                    <select id="keepAudio">
+                        <option value="1" selected>✅ 保留原片音频 (自动对齐裁剪)</option>
+                        <option value="0">🔇 静音输出 (仅视频无声)</option>
+                    </select>
+                </div>
             </div>
 
             <div class="card">
@@ -1037,9 +1044,26 @@ async function runExtraction() {
 
     if (cancelled) { setStatus('任务已取消'); setProgress(0, '已取消'); return; }
 
+    // 2.5 解析原视频音频轨道 (如果启用)
+    let audioBuffer = null;
+    const keepAudio = $('keepAudio').value === '1';
+    if (keepAudio && videoFile) {
+        setStatus('正在读取并对齐原音频轨道…');
+        try {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const arrayBuf = await videoFile.arrayBuffer();
+            audioBuffer = await audioCtx.decodeAudioData(arrayBuf);
+            log(`成功提取原音频: ${audioBuffer.sampleRate}Hz, ${audioBuffer.numberOfChannels}声道, 时长 ${(audioBuffer.duration).toFixed(1)}秒`, 'ok');
+            await audioCtx.close();
+        } catch(e) {
+            log('原视频无音轨或浏览器无法解码该音频格式，将导出无声视频', 'dim');
+            audioBuffer = null;
+        }
+    }
+
     // 3. 编码压制为 MP4 视频
-    setStatus('正在进行 WebCodecs 纯前端压制导出 MP4…');
-    const videoBlob = await encodeFrames(frames, fps, finalW, finalH);
+    setStatus('正在进行 WebCodecs 纯前端压制导出 MP4 (含音频同步)…');
+    const videoBlob = await encodeFrames(frames, fps, finalW, finalH, audioBuffer, selStart, selEnd);
     if (cancelled) { setStatus('任务已取消'); setProgress(0, '已取消'); return; }
 
     // 4. 生成下载链接
@@ -1069,16 +1093,16 @@ async function runExtraction() {
     log(`处理完毕！总用时: ${totalSec} 秒，点击右下角按钮即可保存 MP4`, 'ok');
 }
 
-// ---------- 纯前端视频编码 (WebCodecs + mp4-muxer) ----------
-async function encodeFrames(frames, fps, W, H) {
+// ---------- 纯前端音视频编码 (WebCodecs + mp4-muxer) ----------
+async function encodeFrames(frames, fps, W, H, audioBuffer, selStart, selEnd) {
     if ('VideoEncoder' in window) {
         try {
-            return await encodeFramesWebCodecs(frames, fps, W, H);
+            return await encodeFramesWebCodecs(frames, fps, W, H, audioBuffer, selStart, selEnd);
         } catch(e) {
             log('WebCodecs 硬件编码异常，回退到 MediaRecorder 录制: ' + e.message, 'warn');
         }
     }
-    return encodeFramesRealtime(frames, fps, W, H);
+    return encodeFramesRealtime(frames, fps, W, H, audioBuffer, selStart, selEnd);
 }
 
 async function pickAvcCodec(W, H, fps) {
@@ -1091,17 +1115,40 @@ async function pickAvcCodec(W, H, fps) {
     return null;
 }
 
-async function encodeFramesWebCodecs(frames, fps, W, H) {
+async function encodeFramesWebCodecs(frames, fps, W, H, audioBuffer, selStart, selEnd) {
     const { Muxer, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/+esm');
     const codec = await pickAvcCodec(W, H, fps);
     if (!codec) throw new Error('当前浏览器未提供支持该分辨率的 H.264 编码器');
 
+    // 检查是否具备音频且浏览器支持 AAC 编码
+    let audioConfig = null;
+    let audioEncoder = null;
+    if (audioBuffer && 'AudioEncoder' in window) {
+        const channels = Math.min(2, audioBuffer.numberOfChannels);
+        const sampleRate = audioBuffer.sampleRate;
+        try {
+            const aSupport = await AudioEncoder.isConfigSupported({
+                codec: 'mp4a.40.2',
+                numberOfChannels: channels,
+                sampleRate: sampleRate,
+                bitrate: 128_000
+            });
+            if (aSupport.supported) {
+                audioConfig = { codec: 'aac', numberOfChannels: channels, sampleRate: sampleRate };
+            }
+        } catch(e) {}
+    }
+
     const target = new ArrayBufferTarget();
-    const muxer = new Muxer({
+    const muxerOptions = {
         target,
         video: { codec: 'avc', width: W, height: H },
         fastStart: 'in-memory',
-    });
+    };
+    if (audioConfig) {
+        muxerOptions.audio = audioConfig;
+    }
+    const muxer = new Muxer(muxerOptions);
 
     let encError = null;
     const encoder = new VideoEncoder({
@@ -1112,6 +1159,7 @@ async function encodeFramesWebCodecs(frames, fps, W, H) {
     encoder.configure({ codec, width: W, height: H, framerate: fps, bitrate: 12_000_000 });
     const usPerFrame = 1_000_000 / fps;
 
+    // 1. 压制视频帧
     for (let i = 0; i < frames.length; i++) {
         if (cancelled) break;
         if (encError) throw encError;
@@ -1124,18 +1172,67 @@ async function encodeFramesWebCodecs(frames, fps, W, H) {
             await new Promise(r => encoder.addEventListener('dequeue', r, { once: true }));
         }
         if (i % Math.max(1, fps) === 0) {
-            const p = 88 + (i / frames.length) * 12;
-            setProgress(p, `编码 MP4 中: ${Math.round(i / frames.length * 100)}%`);
+            const p = 88 + (i / frames.length) * 8;
+            setProgress(p, `编码 MP4 视频流: ${Math.round(i / frames.length * 100)}%`);
         }
     }
     await encoder.flush();
     if (encError) throw encError;
     encoder.close();
+
+    // 2. 压制音频轨道 (如果启用)
+    if (audioConfig && !cancelled) {
+        setProgress(97, '编码音频轨道中…');
+        audioEncoder = new AudioEncoder({
+            output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+            error: e => { encError = e; }
+        });
+        audioEncoder.configure({
+            codec: 'mp4a.40.2',
+            numberOfChannels: audioConfig.numberOfChannels,
+            sampleRate: audioConfig.sampleRate,
+            bitrate: 128_000
+        });
+
+        const sampleRate = audioConfig.sampleRate;
+        const channels = audioConfig.numberOfChannels;
+        const startSample = Math.max(0, Math.floor(selStart * sampleRate));
+        const endSample = Math.min(Math.floor(selEnd * sampleRate), audioBuffer.length);
+        const CHUNK_FRAMES = 1024;
+        let offset = startSample;
+        let audioTimestampUs = 0;
+
+        while (offset < endSample) {
+            if (cancelled || encError) break;
+            const n = Math.min(CHUNK_FRAMES, endSample - offset);
+            const planar = new Float32Array(n * channels);
+            for (let c = 0; c < channels; c++) {
+                const srcData = audioBuffer.getChannelData(c);
+                planar.set(srcData.subarray(offset, offset + n), c * n);
+            }
+            const audioData = new AudioData({
+                format: 'f32-planar',
+                sampleRate: sampleRate,
+                numberOfFrames: n,
+                numberOfChannels: channels,
+                timestamp: audioTimestampUs,
+                data: planar
+            });
+            audioEncoder.encode(audioData);
+            audioData.close();
+            offset += n;
+            audioTimestampUs += Math.round(n / sampleRate * 1_000_000);
+        }
+        await audioEncoder.flush();
+        audioEncoder.close();
+        log(`原视频音频已成功按裁剪区间同步封装 (${(audioTimestampUs / 1_000_000).toFixed(1)} 秒) ✓`, 'ok');
+    }
+
     muxer.finalize();
     return new Blob([target.buffer], { type: 'video/mp4' });
 }
 
-async function encodeFramesRealtime(frames, fps, W, H) {
+async function encodeFramesRealtime(frames, fps, W, H, audioBuffer, selStart, selEnd) {
     const c = document.createElement('canvas');
     c.width = W; c.height = H;
     const ctx = c.getContext('2d');
@@ -1143,7 +1240,23 @@ async function encodeFramesRealtime(frames, fps, W, H) {
     ctx.drawImage(first, 0, 0);
 
     const stream = c.captureStream(fps);
-    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+    let audioCtx = null;
+    let sourceNode = null;
+    if (audioBuffer) {
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const dest = audioCtx.createMediaStreamDestination();
+            sourceNode = audioCtx.createBufferSource();
+            sourceNode.buffer = audioBuffer;
+            sourceNode.connect(dest);
+            dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+            sourceNode.start(0, selStart, selEnd - selStart);
+        } catch(e) {}
+    }
+
+    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') 
+        ? 'video/webm;codecs=vp9,opus' 
+        : (MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm');
     const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 10_000_000 });
     const chunks = [];
     rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
@@ -1165,6 +1278,8 @@ async function encodeFramesRealtime(frames, fps, W, H) {
     }
     await sleep(interval * 2);
     rec.stop();
+    if (sourceNode) { try { sourceNode.stop(); } catch(e){} }
+    if (audioCtx) { try { await audioCtx.close(); } catch(e){} }
     await done;
     return new Blob(chunks, { type: mime });
 }
