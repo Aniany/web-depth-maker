@@ -810,8 +810,16 @@ async function detectVideoFps(file, videoSrc) {
 const inVideo = $('inVideo');
 let videoFile = null;
 
+let lastInVideoUrl = null;
+let lastOutVideoUrl = null;
+
 function loadVideoFile(file) {
     if (!file) return;
+    if (running) {
+        log('当前已有正在运行的转换任务，请等待完成或点击「取消」后再载入新视频。', 'warn');
+        return;
+    }
+    if (lastInVideoUrl) { try { URL.revokeObjectURL(lastInVideoUrl); } catch(e){} }
     // 兼容各类命名与扩展名 (MP4, WebM, MOV, MKV)
     const isVideo = file.type.startsWith('video/') || /\.(mp4|webm|mov|mkv|avi|m4v|flv)$/i.test(file.name);
     if (!isVideo) {
@@ -819,7 +827,7 @@ function loadVideoFile(file) {
         return;
     }
     videoFile = file;
-    inVideo.src = URL.createObjectURL(file);
+    lastInVideoUrl = inVideo.src = URL.createObjectURL(file);
     inVideo.style.display = '';
     $('inPlaceholder').style.display = 'none';
     $('inStage').classList.remove('empty');
@@ -974,12 +982,19 @@ window.addEventListener('pointerup', () => { dragMode = null; });
 $('rangeResetBtn').onclick = () => { if (videoFile && isFinite(inVideo.duration)) initRange(inVideo.duration); };
 $('fps').addEventListener('change', updateRangeInfo);
 
-// ---------- 同步播放 ----------
+// ---------- 同步播放 (精准对齐裁剪起始点) ----------
 const outVideoEl = $('outVideo');
 $('syncPlayBtn').onclick = () => {
-    inVideo.currentTime = 0; outVideoEl.currentTime = 0;
-    inVideo.play(); outVideoEl.play();
+    inVideo.currentTime = rangeSel.start || 0;
+    outVideoEl.currentTime = 0;
+    inVideo.play();
+    outVideoEl.play();
 };
+
+// 双屏联动暂停与播放结束联动
+inVideo.addEventListener('pause', () => { if (!outVideoEl.paused) outVideoEl.pause(); });
+outVideoEl.addEventListener('pause', () => { if (!inVideo.paused) inVideo.pause(); });
+outVideoEl.addEventListener('ended', () => { if (!inVideo.paused) inVideo.pause(); });
 
 // ---------- 调色板映射 (LUT) ----------
 const CMAP_ANCHORS = {
@@ -1016,7 +1031,12 @@ async function ensureDepth(modelId) {
     if (!transformersMod) {
         setStatus('正在加载 Transformers.js Web 运行时…');
         log('从 CDN 导入 @huggingface/transformers.js 模块…');
-        transformersMod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2/+esm');
+        try {
+            transformersMod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2/+esm');
+        } catch(e) {
+            log('jsDelivr 主通道连接慢，自动切换 esm.sh 备用 CDN…', 'warn');
+            transformersMod = await import('https://esm.sh/@huggingface/transformers@3.5.2');
+        }
         transformersMod.env.allowLocalModels = false;
         if (!('caches' in self)) transformersMod.env.useBrowserCache = false;
     }
@@ -1050,10 +1070,12 @@ async function ensureDepth(modelId) {
     depthPipeKey = modelId;
 }
 
-// ---------- 精准时间跳转 ----------
+// ---------- 精准时间跳转 (带瞬时判定与防死锁) ----------
 function seekTo(video, tSec) {
+    // 若目标时间与当前时间极其接近，直接瞬间返回，避免浏览器不触发 seeked 导致白白等待
+    if (Math.abs(video.currentTime - tSec) < 0.0001) return Promise.resolve();
     return new Promise((resolve) => {
-        const timer = setTimeout(() => { cleanup(); resolve(); }, 3000);
+        const timer = setTimeout(() => { cleanup(); resolve(); }, 2000);
         function onSeeked() { cleanup(); resolve(); }
         function cleanup() { clearTimeout(timer); video.removeEventListener('seeked', onSeeked); }
         video.addEventListener('seeked', onSeeked);
@@ -1094,7 +1116,8 @@ $('startBtn').onclick = async () => {
 
 async function runExtraction() {
     const mode = $('mode').value;
-    const fps = parseInt($('fps').value);
+    const fpsVal = $('fps').value;
+    const fps = (fpsVal === 'auto') ? (detectedFps || 30) : (parseFloat(fpsVal) || 30);
     const maxSide = parseInt($('maxSide').value);
     const style = $('depthStyle').value;
     const invert = $('depthInvert').value === '1';
@@ -1106,24 +1129,35 @@ async function runExtraction() {
     if (cancelled) { setStatus('任务已取消'); setProgress(0, '已取消'); return; }
 
     // 2. 分辨率适配（保持偶数以便 H.264 编码）
-    const vw = inVideo.videoWidth, vh = inVideo.videoHeight;
+    const vw = inVideo.videoWidth || 1280, vh = inVideo.videoHeight || 720;
     let scale = 1;
     if (maxSide > 0 && Math.max(vw, vh) > maxSide) scale = maxSide / Math.max(vw, vh);
-    const W = Math.round(vw * scale / 2) * 2;
-    const H = Math.round(vh * scale / 2) * 2;
+    let W = Math.round(vw * scale / 2) * 2;
+    let H = Math.round(vh * scale / 2) * 2;
 
     // 最终输出宽度
-    const finalW = (mode === 'side_by_side') ? W * 2 : W;
-    const finalH = H;
+    let finalW = (mode === 'side_by_side') ? W * 2 : W;
+    let finalH = H;
 
-    const duration = inVideo.duration;
+    // 显卡硬件 4K 边界保护 (H.264 Level 5.2 硬件编码器最大单边 4096，超出将引发显卡报错)
+    if (finalW > 4096 || finalH > 4096) {
+        const clampRatio = Math.min(4096 / finalW, 4096 / finalH);
+        W = Math.round(W * clampRatio / 2) * 2;
+        H = Math.round(H * clampRatio / 2) * 2;
+        finalW = (mode === 'side_by_side') ? W * 2 : W;
+        finalH = H;
+        log(`画面尺寸已优化微调为 ${finalW}×${finalH}，符合显卡硬件 4K 安全编码规范 ✓`, 'ok');
+    }
+
+    const duration = isFinite(inVideo.duration) && inVideo.duration > 0 ? inVideo.duration : (rangeSel.end || 10);
     const selStart = Math.min(rangeSel.start, Math.max(0, duration - 0.2));
     const selEnd = Math.min(Math.max(rangeSel.end || duration, selStart + 0.1), duration);
-    const segDur = selEnd - selStart;
+    const segDur = Math.max(0.1, selEnd - selStart);
     const total = Math.max(1, Math.round(segDur * fps));
 
-    log(`开始渲染: ${finalW}×${finalH}, ${fps} FPS, 共 ${total} 帧 (截取时长: ${segDur.toFixed(1)}秒)`);
-    setStatus(`正在转换… ${finalW}×${finalH}, ${fps} FPS, 总计 ${total} 帧`);
+    const displayFps = Math.round(fps);
+    log(`开始渲染: ${finalW}×${finalH}, ${displayFps} FPS (基准: ${fps.toFixed(2)}), 共 ${total} 帧 (截取时长: ${segDur.toFixed(1)}秒)`);
+    setStatus(`正在转换… ${finalW}×${finalH}, ${displayFps} FPS, 总计 ${total} 帧`);
 
     // 画布准备
     const srcCanvas = document.createElement('canvas');
@@ -1190,8 +1224,16 @@ async function runExtraction() {
             octx.drawImage(depthCanvas, 0, 0, W, H);
         }
 
-        // 收集帧 Blob
-        frames.push(await new Promise(r => outCanvas.toBlob(r, 'image/jpeg', 0.92)));
+        // 收集帧 Blob (带严格非空双重保险)
+        let fBlob = await new Promise(r => outCanvas.toBlob(r, 'image/jpeg', 0.92));
+        if (!fBlob) {
+            fBlob = await new Promise(r => outCanvas.toBlob(r, 'image/png'));
+        }
+        if (fBlob) {
+            frames.push(fBlob);
+        } else if (frames.length > 0) {
+            frames.push(frames[frames.length - 1]); // 重复上一帧兜底，防止 null 导致 createImageBitmap 崩溃
+        }
 
         const pct = (i + 1) / total * 88;
         const elapsed = (performance.now() - t0) / 1000;
@@ -1208,15 +1250,19 @@ async function runExtraction() {
     const keepAudio = $('keepAudio').value === '1';
     if (keepAudio && videoFile) {
         setStatus('正在读取并对齐原音频轨道…');
+        let audioCtx = null;
         try {
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             const arrayBuf = await videoFile.arrayBuffer();
             audioBuffer = await audioCtx.decodeAudioData(arrayBuf);
             log(`成功提取原音频: ${audioBuffer.sampleRate}Hz, ${audioBuffer.numberOfChannels}声道, 时长 ${(audioBuffer.duration).toFixed(1)}秒`, 'ok');
-            await audioCtx.close();
         } catch(e) {
-            log('原视频无音轨或浏览器无法解码该音频格式，将导出无声视频', 'dim');
+            log('原视频无音轨或浏览器无法解码该音频格式，将导出无声视频: ' + (e?.message || e), 'dim');
             audioBuffer = null;
+        } finally {
+            if (audioCtx && audioCtx.state !== 'closed') {
+                try { await audioCtx.close(); } catch(e) {}
+            }
         }
     }
 
@@ -1239,7 +1285,8 @@ async function runExtraction() {
     resEl.appendChild(a);
 
     // 5. 输出预览
-    outVideoEl.src = URL.createObjectURL(videoBlob);
+    if (lastOutVideoUrl) { try { URL.revokeObjectURL(lastOutVideoUrl); } catch(e){} }
+    lastOutVideoUrl = outVideoEl.src = URL.createObjectURL(videoBlob);
     outVideoEl.style.display = '';
     outCanvas.style.display = 'none';
     const outChip = $('outChip');
@@ -1265,19 +1312,64 @@ async function encodeFrames(frames, fps, W, H, audioBuffer, selStart, selEnd) {
 }
 
 async function pickAvcCodec(W, H, fps) {
-    for (const codec of ['avc1.640033','avc1.64002A','avc1.640028','avc1.4D0028','avc1.42E01F']) {
+    const intFps = Math.max(1, Math.round(fps));
+    // 覆盖全规格 H.264 级别 (从 4K/60fps High 5.2 到 720p/1080p Baseline)
+    const candidates = [
+        'avc1.640034', // High Level 5.2 (完美支持 4K60、超宽高分屏)
+        'avc1.640033', // High Level 5.1 (支持 1080p60)
+        'avc1.640032', // High Level 5.0
+        'avc1.64002A', // High Level 4.2
+        'avc1.640028', // High Level 4.0
+        'avc1.4D0034', // Main Level 5.2
+        'avc1.4D0033', // Main Level 5.1
+        'avc1.4D002A', // Main Level 4.2
+        'avc1.4D0028', // Main Level 4.0
+        'avc1.420034', // Baseline Level 5.2
+        'avc1.420033', // Baseline Level 5.1
+        'avc1.42E01F', // Constrained Baseline 3.1
+        'avc1.42001F', // Baseline 3.1
+        'avc1.42001E', // Baseline 3.0
+    ];
+
+    for (const codec of candidates) {
         try {
-            const { supported } = await VideoEncoder.isConfigSupported({ codec, width: W, height: H, framerate: fps });
+            // 注意：MediaFoundation 等硬件接口对 framerate 要求必须为整数，不可传小数
+            const { supported } = await VideoEncoder.isConfigSupported({
+                codec,
+                width: W,
+                height: H,
+                framerate: intFps
+            });
             if (supported) return codec;
         } catch(e) {}
     }
+
+    // 宽容模式探测
+    try {
+        const { supported } = await VideoEncoder.isConfigSupported({
+            codec: 'avc1.42001e',
+            width: W,
+            height: H
+        });
+        if (supported) return 'avc1.42001e';
+    } catch(e) {}
     return null;
 }
 
 async function encodeFramesWebCodecs(frames, fps, W, H, audioBuffer, selStart, selEnd) {
-    const { Muxer, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/+esm');
+    const validFrames = frames.filter(f => f != null);
+    if (validFrames.length === 0) throw new Error('未能捕获到有效渲染帧');
+
+    const intFps = Math.max(1, Math.round(fps));
+    let muxerModule = null;
+    try {
+        muxerModule = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/+esm');
+    } catch(e) {
+        muxerModule = await import('https://esm.sh/mp4-muxer@5.2.2');
+    }
+    const { Muxer, ArrayBufferTarget } = muxerModule;
     const codec = await pickAvcCodec(W, H, fps);
-    if (!codec) throw new Error('当前浏览器未提供支持该分辨率的 H.264 编码器');
+    if (!codec) throw new Error(`当前显卡/浏览器未支持 ${W}×${H} @ ${intFps}FPS 硬件编码`);
 
     // 检查是否具备音频且浏览器支持 AAC 编码
     let audioConfig = null;
@@ -1315,24 +1407,35 @@ async function encodeFramesWebCodecs(frames, fps, W, H, audioBuffer, selStart, s
         error: e => { encError = e; },
     });
 
-    encoder.configure({ codec, width: W, height: H, framerate: fps, bitrate: 12_000_000 });
+    encoder.configure({
+        codec,
+        width: W,
+        height: H,
+        framerate: intFps,
+        bitrate: Math.min(25_000_000, Math.max(4_000_000, Math.round(W * H * intFps * 0.14)))
+    });
     const usPerFrame = 1_000_000 / fps;
 
     // 1. 压制视频帧
-    for (let i = 0; i < frames.length; i++) {
+    for (let i = 0; i < validFrames.length; i++) {
         if (cancelled) break;
         if (encError) throw encError;
-        const bmp = await createImageBitmap(frames[i]);
+        let bmp = null;
+        try {
+            bmp = await createImageBitmap(validFrames[i]);
+        } catch(e) {
+            continue; // 跳过损坏帧
+        }
         const vf = new VideoFrame(bmp, { timestamp: Math.round(i * usPerFrame), duration: Math.round(usPerFrame) });
-        encoder.encode(vf, { keyFrame: i % (fps * 2) === 0 });
+        encoder.encode(vf, { keyFrame: i % (intFps * 2) === 0 });
         vf.close(); bmp.close();
 
         if (encoder.encodeQueueSize > 8) {
             await new Promise(r => encoder.addEventListener('dequeue', r, { once: true }));
         }
-        if (i % Math.max(1, fps) === 0) {
-            const p = 88 + (i / frames.length) * 8;
-            setProgress(p, `编码 MP4 视频流: ${Math.round(i / frames.length * 100)}%`);
+        if (i % Math.max(1, intFps) === 0) {
+            const p = 88 + (i / validFrames.length) * 8;
+            setProgress(p, `编码 MP4 视频流: ${Math.round(i / validFrames.length * 100)}%`);
         }
     }
     await encoder.flush();
@@ -1392,13 +1495,22 @@ async function encodeFramesWebCodecs(frames, fps, W, H, audioBuffer, selStart, s
 }
 
 async function encodeFramesRealtime(frames, fps, W, H, audioBuffer, selStart, selEnd) {
+    const validFrames = frames.filter(f => f != null);
+    if (validFrames.length === 0) throw new Error('未收集到有效视频画面');
+
     const c = document.createElement('canvas');
     c.width = W; c.height = H;
     const ctx = c.getContext('2d');
-    const first = await createImageBitmap(frames[0]);
+    let first = null;
+    try {
+        first = await createImageBitmap(validFrames[0]);
+    } catch(e) {
+        throw new Error('帧图像解码失败: ' + e.message);
+    }
     ctx.drawImage(first, 0, 0);
 
-    const stream = c.captureStream(fps);
+    const intFps = Math.max(1, Math.round(fps));
+    const stream = c.captureStream(intFps);
     let audioCtx = null;
     let sourceNode = null;
     if (audioBuffer) {
@@ -1409,38 +1521,59 @@ async function encodeFramesRealtime(frames, fps, W, H, audioBuffer, selStart, se
             sourceNode.buffer = audioBuffer;
             sourceNode.connect(dest);
             dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
-            sourceNode.start(0, selStart, selEnd - selStart);
+            const audioLen = Math.max(0.05, selEnd - selStart);
+            sourceNode.start(0, selStart, audioLen);
         } catch(e) {}
     }
 
-    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') 
-        ? 'video/webm;codecs=vp9,opus' 
-        : (MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm');
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 10_000_000 });
+    let mime = '';
+    const candidates = [
+        'video/mp4;codecs=avc1,mp4a.40.2',
+        'video/mp4',
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm'
+    ];
+    for (const item of candidates) {
+        if (typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(item)) {
+            mime = item;
+            break;
+        }
+    }
+    const recOptions = mime ? { mimeType: mime, videoBitsPerSecond: 10_000_000 } : { videoBitsPerSecond: 10_000_000 };
+    const rec = new MediaRecorder(stream, recOptions);
     const chunks = [];
     rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
     const done = new Promise(res => rec.onstop = res);
     rec.start(500);
 
-    const interval = 1000 / fps;
+    const interval = 1000 / intFps;
     let next = performance.now();
     let cur = first;
-    for (let i = 0; i < frames.length; i++) {
+    for (let i = 0; i < validFrames.length; i++) {
         if (cancelled) break;
-        ctx.drawImage(cur, 0, 0);
-        if (cur !== first || i > 0) cur.close?.();
-        const nextP = i + 1 < frames.length ? createImageBitmap(frames[i + 1]) : null;
+        if (cur) {
+            ctx.drawImage(cur, 0, 0);
+            if (cur !== first) cur.close?.();
+        }
+        let nextBmp = null;
+        if (i + 1 < validFrames.length) {
+            try {
+                nextBmp = await createImageBitmap(validFrames[i + 1]);
+            } catch(e) {}
+        }
         next += interval;
         const wait = next - performance.now();
         if (wait > 0) await sleep(wait);
-        if (nextP) cur = await nextP;
+        cur = nextBmp;
     }
+    if (first) first.close?.();
     await sleep(interval * 2);
-    rec.stop();
+    if (rec.state === 'recording') rec.stop();
     if (sourceNode) { try { sourceNode.stop(); } catch(e){} }
-    if (audioCtx) { try { await audioCtx.close(); } catch(e){} }
+    if (audioCtx && audioCtx.state !== 'closed') { try { await audioCtx.close(); } catch(e){} }
     await done;
-    return new Blob(chunks, { type: mime });
+    return new Blob(chunks, { type: mime || 'video/webm' });
 }
 
 log('Web Depth Maker 已加载就绪。一切计算均在您当前浏览器的 WebGPU 硬件中运行。');
