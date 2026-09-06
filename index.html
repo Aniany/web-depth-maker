@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Web Depth Maker — 浏览器纯前端视频深度转换</title>
+    <!-- 专属 3D 深度图标 (解决默认空白地球图标) -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjggMTI4IiB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIj4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iYmciIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMGYxNzJhIiAvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiMwMjA2MTciIC8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJib3JkZXIiIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMzhiZGY4IiAvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiMxZDRlZDgiIC8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJ0b3BGYWNlIiB4MT0iMCUiIHkxPSIxMDAlIiB4Mj0iMTAwJSIgeTI9IjAlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgc3RvcC1jb2xvcj0iIzAyODRjNyIgLz4KICAgICAgPHN0b3Agb2Zmc2V0PSI2MCUiIHN0b3AtY29sb3I9IiMzOGJkZjgiIC8+CiAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iI2UwZjJmZSIgLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImxlZnRGYWNlIiB4MT0iMCUiIHkxPSIwJSIgeDI9IjEwMCUiIHkyPSIxMDAlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgc3RvcC1jb2xvcj0iIzMxMmU4MSIgLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjMWUxYjRiIiAvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0icmlnaHRGYWNlIiB4MT0iMCUiIHkxPSIwJSIgeDI9IjEwMCUiIHkyPSIxMDAlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgc3RvcC1jb2xvcj0iIzI1NjNlYiIgLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjMWQ0ZWQ4IiAvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iY29yZVdhdmUiIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjZmZmZmZmIiAvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiMzOGJkZjgiIC8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KCiAgPCEtLSDlnIbop5LmmpflpJzlpJblo7MgLS0+CiAgPHJlY3QgeD0iNiIgeT0iNiIgd2lkdGg9IjExNiIgaGVpZ2h0PSIxMTYiIHJ4PSIyOCIgZmlsbD0idXJsKCNiZykiIHN0cm9rZT0idXJsKCNib3JkZXIpIiBzdHJva2Utd2lkdGg9IjMiIC8+CgogIDwhLS0gM0Qg562J6Led56m66Ze05rex5bqm5qOx5p+xIChJc29tZXRyaWMgRGVwdGggUHJpc20pIC0tPgogIDwhLS0g6aG26Z2iICjov5Hmma8gLSDmnoHlhYnpnZLnmb3pq5jlhYkpIC0tPgogIDxwb2x5Z29uIHBvaW50cz0iNjQsMjIgMTAyLDQ0IDY0LDY2IDI2LDQ0IiBmaWxsPSJ1cmwoI3RvcEZhY2UpIiAvPgoKICA8IS0tIOW3pumdoiAo5rex5pmvIC0g5rex6YKD5pqX5aSc57Sr6JOdKSAtLT4KICA8cG9seWdvbiBwb2ludHM9IjI2LDQ0IDY0LDY2IDY0LDEwNiAyNiw4NCIgZmlsbD0idXJsKCNsZWZ0RmFjZSkiIC8+CgogIDwhLS0g5Y+z6Z2iICjkuK3mma8gLSDpkrTok53ppbHlkozov4fmuKEpIC0tPgogIDxwb2x5Z29uIHBvaW50cz0iMTAyLDQ0IDY0LDY2IDY0LDEwNiAxMDIsODQiIGZpbGw9InVybCgjcmlnaHRGYWNlKSIgLz4KCiAgPCEtLSDlhoXpg6jnq4vkvZPmt7HluqbliIfniYfnrYnpq5jnur8gKOWGheW1jCAzRCDmma/mt7HlsYLmrKEpIC0tPgogIDwhLS0g6aG26Z2i6Zi25qKv5YiH57q/IC0tPgogIDxwb2x5bGluZSBwb2ludHM9IjM4LDM3IDY0LDUyIDkwLDM3IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmZmZmYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBvcGFjaXR5PSIwLjkiIC8+CiAgPHBvbHlsaW5lIHBvaW50cz0iNDgsMzEgNjQsNDAgODAsMzEiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2JhZTZmZCIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIG9wYWNpdHk9IjAuOCIgLz4KCiAgPCEtLSDmraPkuK3mt7HluqbovbTlv4Ppq5jlhYnohIrnur8gLS0+CiAgPGxpbmUgeDE9IjY0IiB5MT0iMjIiIHgyPSI2NCIgeTI9IjEwNiIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utd2lkdGg9IjIuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBvcGFjaXR5PSIwLjk1IiAvPgoKICA8IS0tIOWPs+S+p+mYtuair+Wxguasoee6vyAtLT4KICA8bGluZSB4MT0iNjQiIHkxPSI4MCIgeDI9IjEwMiIgeTI9IjU4IiBzdHJva2U9IiM2MGE1ZmEiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBvcGFjaXR5PSIwLjc1IiAvPgogIDxsaW5lIHgxPSI2NCIgeTE9Ijk0IiB4Mj0iMTAyIiB5Mj0iNzIiIHN0cm9rZT0iIzkzYzVmZCIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIG9wYWNpdHk9IjAuNyIgLz4KCiAgPCEtLSDlt6bkvqfpmLbmoq/lsYLmrKHnur8gLS0+CiAgPGxpbmUgeDE9IjI2IiB5MT0iNTgiIHgyPSI2NCIgeTI9IjgwIiBzdHJva2U9IiM4MThjZjgiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBvcGFjaXR5PSIwLjc1IiAvPgogIDxsaW5lIHgxPSIyNiIgeTE9IjcyIiB4Mj0iNjQiIHkyPSI5NCIgc3Ryb2tlPSIjYTViNGZjIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgb3BhY2l0eT0iMC43IiAvPgoKICA8IS0tIOmhtueCueeSgOeSqOa/gOWFiea1i+i3neWFieaYnyAoRGVwdGggTGlEQVIgRm9jYWwgUG9pbnQpIC0tPgogIDxjaXJjbGUgY3g9IjY0IiBjeT0iMjIiIHI9IjQuNSIgZmlsbD0iI2ZmZmZmZiIgLz4KICA8Y2lyY2xlIGN4PSI2NCIgY3k9IjIyIiByPSI3IiBmaWxsPSJub25lIiBzdHJva2U9IiMzOGJkZjgiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjgiIC8+Cjwvc3ZnPg==">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="alternate icon" href="favicon.ico">
+    <link rel="apple-touch-icon" href="favicon.png">
     <style>
         :root {
             --bg: #0d0f14;
@@ -44,13 +49,33 @@
             flex: 0 0 auto;
             background: #11131a;
         }
-        .brand .eyebrow {
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .brand-icon {
+            width: 38px;
+            height: 38px;
+            flex-shrink: 0;
+            border-radius: 9px;
+            box-shadow: 0 0 16px rgba(56, 189, 248, 0.35);
+            transition: transform 0.2s ease;
+        }
+        .brand-icon:hover {
+            transform: scale(1.08) rotate(2deg);
+        }
+        .brand-text {
+            display: flex;
+            flex-direction: column;
+        }
+        .brand-text .eyebrow {
             font-size: 10px;
             letter-spacing: 2.5px;
             color: #60a5fa;
             font-weight: 700;
         }
-        .brand h1 {
+        .brand-text h1 {
             font-size: 18px;
             font-weight: 700;
             color: #ffffff;
@@ -349,8 +374,72 @@
 
 <header>
     <div class="brand">
-        <div class="eyebrow">BROWSER WEBGPU</div>
-        <h1>Web Depth Maker</h1>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" class="brand-icon">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+    <linearGradient id="border" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+    <linearGradient id="topFace" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="60%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#e0f2fe" />
+    </linearGradient>
+    <linearGradient id="leftFace" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#312e81" />
+      <stop offset="100%" stop-color="#1e1b4b" />
+    </linearGradient>
+    <linearGradient id="rightFace" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563eb" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+    <linearGradient id="coreWave" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#38bdf8" />
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角暗夜外壳 -->
+  <rect x="6" y="6" width="116" height="116" rx="28" fill="url(#bg)" stroke="url(#border)" stroke-width="3" />
+
+  <!-- 3D 等距空间深度棱柱 (Isometric Depth Prism) -->
+  <!-- 顶面 (近景 - 极光青白高光) -->
+  <polygon points="64,22 102,44 64,66 26,44" fill="url(#topFace)" />
+
+  <!-- 左面 (深景 - 深邃暗夜紫蓝) -->
+  <polygon points="26,44 64,66 64,106 26,84" fill="url(#leftFace)" />
+
+  <!-- 右面 (中景 - 钴蓝饱和过渡) -->
+  <polygon points="102,44 64,66 64,106 102,84" fill="url(#rightFace)" />
+
+  <!-- 内部立体深度切片等高线 (内嵌 3D 景深层次) -->
+  <!-- 顶面阶梯切线 -->
+  <polyline points="38,37 64,52 90,37" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" opacity="0.9" />
+  <polyline points="48,31 64,40 80,31" fill="none" stroke="#bae6fd" stroke-width="2" stroke-linecap="round" opacity="0.8" />
+
+  <!-- 正中深度轴心高光脊线 -->
+  <line x1="64" y1="22" x2="64" y2="106" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" opacity="0.95" />
+
+  <!-- 右侧阶梯层次线 -->
+  <line x1="64" y1="80" x2="102" y2="58" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" opacity="0.75" />
+  <line x1="64" y1="94" x2="102" y2="72" stroke="#93c5fd" stroke-width="2" stroke-linecap="round" opacity="0.7" />
+
+  <!-- 左侧阶梯层次线 -->
+  <line x1="26" y1="58" x2="64" y2="80" stroke="#818cf8" stroke-width="2" stroke-linecap="round" opacity="0.75" />
+  <line x1="26" y1="72" x2="64" y2="94" stroke="#a5b4fc" stroke-width="2" stroke-linecap="round" opacity="0.7" />
+
+  <!-- 顶点璀璨激光测距光星 (Depth LiDAR Focal Point) -->
+  <circle cx="64" cy="22" r="4.5" fill="#ffffff" />
+  <circle cx="64" cy="22" r="7" fill="none" stroke="#38bdf8" stroke-width="1.5" opacity="0.8" />
+</svg>
+        <div class="brand-text">
+            <div class="eyebrow">BROWSER WEBGPU</div>
+            <h1>Web Depth Maker</h1>
+        </div>
     </div>
     <div class="badge" id="gpuBadge">检测 WebGPU 状态中...</div>
     <div class="badge">零后端 · 100% 浏览器本地</div>
