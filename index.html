@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Depth Maker — 浏览器纯前端视频深度转换</title>
+    <style>
+        :root {
+            --bg: #0d0f14;
+            --panel: #161922;
+            --field: #1e2230;
+            --border: #282f42;
+            --border-highlight: #3b4662;
+            --text: #f1f5f9;
+            --dim: #94a3b8;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --accent-soft: rgba(59, 130, 246, 0.15);
+            --success: #10b981;
+            --success-hover: #059669;
+            --danger: #ef4444;
+            --well: #090a0d;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+            font-size: 13px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* 顶部导航 */
+        header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 24px;
+            border-bottom: 1px solid var(--border);
+            flex: 0 0 auto;
+            background: #11131a;
+        }
+        .brand .eyebrow {
+            font-size: 10px;
+            letter-spacing: 2.5px;
+            color: #60a5fa;
+            font-weight: 700;
+        }
+        .brand h1 {
+            font-size: 18px;
+            font-weight: 700;
+            color: #ffffff;
+            letter-spacing: -0.3px;
+        }
+        .badge {
+            border: 1px solid var(--border-highlight);
+            background: var(--field);
+            color: #38bdf8;
+            font-size: 11px;
+            letter-spacing: 0.8px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-weight: 600;
+        }
+        .spacer { flex: 1; }
+        .btn-header {
+            font-family: inherit;
+            font-size: 12px;
+            color: #cbd5e1;
+            background: var(--field);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 6px 14px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .btn-header:hover { border-color: #60a5fa; color: #fff; }
+        .btn-header:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        /* 主工作区布局 */
+        main {
+            flex: 1 1 auto;
+            display: grid;
+            min-height: 0;
+            grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr) 340px;
+            grid-template-rows: auto minmax(0, 1fr) auto auto;
+            grid-template-areas:
+                "ihead  ohead  set"
+                "istage ostage set"
+                "itrim  otrim  set"
+                "iunder ounder set";
+            column-gap: 16px;
+            row-gap: 0;
+            padding: 16px 24px;
+        }
+
+        @media (max-width: 900px) {
+            body { overflow-y: auto; }
+            main {
+                display: flex;
+                flex-direction: column;
+                gap: 16px;
+                overflow-y: visible;
+            }
+        }
+
+        .panel-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            min-height: 24px;
+        }
+        .panel-head .label {
+            font-size: 11px;
+            letter-spacing: 1.5px;
+            color: var(--dim);
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .chip {
+            margin-left: auto;
+            background: var(--field);
+            border: 1px solid var(--border);
+            color: #94a3b8;
+            font-size: 11px;
+            padding: 2px 10px;
+            border-radius: 999px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 60%;
+        }
+
+        /* 视频预览舞台 */
+        .stage {
+            min-height: 0;
+            background: var(--well);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: inset 0 2px 10px rgba(0,0,0,0.6);
+        }
+        .stage video, .stage canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+        }
+        .stage.drag { outline: 2px dashed var(--accent); outline-offset: -8px; }
+        .stage.empty { cursor: pointer; }
+        .stage .placeholder {
+            color: #64748b;
+            font-size: 13px;
+            text-align: center;
+            padding: 24px;
+            line-height: 1.8;
+        }
+        .stage.empty .placeholder {
+            border: 1.5px dashed #334155;
+            border-radius: 12px;
+            padding: 36px 48px;
+            transition: border-color 0.15s ease;
+        }
+        .stage.empty:hover .placeholder { border-color: var(--accent); color: #94a3b8; }
+        .dz-title { font-size: 16px; font-weight: 600; color: #cbd5e1; margin-bottom: 4px; }
+        .dz-sub { font-size: 12px; color: #64748b; }
+
+        /* 时间轴裁剪条 */
+        .trim-wrap { margin-top: 8px; }
+        .trimbar {
+            position: relative;
+            height: 46px;
+            background: #090a0d;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+        }
+        #trimStrip { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+        .trim-shade { position: absolute; top: 0; bottom: 0; background: rgba(10, 12, 16, 0.7); pointer-events: none; }
+        .trim-region {
+            position: absolute; top: 0; bottom: 0;
+            box-sizing: border-box;
+            border-top: 2px solid var(--accent);
+            border-bottom: 2px solid var(--accent);
+            cursor: grab;
+        }
+        .trim-region:active { cursor: grabbing; }
+        .trim-handle {
+            position: absolute; top: 0; bottom: 0; width: 14px;
+            background: var(--accent);
+            cursor: ew-resize;
+            display: flex; align-items: center; justify-content: center;
+            color: #fff; font-size: 12px; font-weight: 700;
+            border-radius: 3px; z-index: 2;
+        }
+        .trim-handle:hover { background: var(--accent-hover); }
+        .trim-info { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+        .hint { color: var(--dim); font-size: 11.5px; }
+
+        .under { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex: 0 0 auto; }
+        .under .name { color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        /* 右侧设置面板 */
+        .sidebar { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+        .settings {
+            flex: 1 1 auto;
+            overflow-y: auto;
+            min-height: 0;
+            padding-right: 4px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .settings::-webkit-scrollbar { width: 6px; }
+        .settings::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px;
+        }
+        .card h3 {
+            font-size: 11px;
+            letter-spacing: 1.5px;
+            color: #64748b;
+            font-weight: 700;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+        .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+        .row:last-child { margin-bottom: 0; }
+        .row label.t { flex: 0 0 auto; color: #cbd5e1; min-width: 80px; font-size: 12px; }
+
+        select, input[type=text] {
+            flex: 1; min-width: 0;
+            background: var(--field);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-family: inherit;
+            font-size: 12px;
+            outline: none;
+        }
+        select:focus, input[type=text]:focus { border-color: var(--accent); }
+        input[type=range] { flex: 1; accent-color: var(--accent); }
+        .val { flex: 0 0 36px; text-align: right; color: var(--dim); font-variant-numeric: tabular-nums; }
+
+        .startrow { display: flex; gap: 8px; margin-top: 4px; }
+        .btn-action {
+            flex: 1;
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .btn-action:hover { background: var(--accent-hover); }
+        .btn-action:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-cancel {
+            background: var(--field);
+            border: 1px solid var(--border);
+            color: #cbd5e1;
+            padding: 12px 18px;
+            border-radius: 8px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .btn-cancel:hover { border-color: var(--danger); color: var(--danger); }
+        .btn-cancel:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        /* 底部状态与结果 */
+        footer {
+            flex: 0 0 auto;
+            padding: 12px 24px 16px;
+            border-top: 1px solid var(--border);
+            background: #11131a;
+        }
+        .progress-wrap {
+            background: var(--field);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            height: 22px;
+            position: relative;
+            overflow: hidden;
+        }
+        .progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--success)); transition: width 0.15s linear; }
+        .progress-text {
+            position: absolute; inset: 0;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 11px; font-weight: 700; color: #fff;
+        }
+        .status-line { margin: 8px 0 4px; color: var(--dim); font-size: 12px; display: flex; justify-content: space-between; }
+        #log {
+            background: #090a0d;
+            border: 1px solid #1e2433;
+            border-radius: 6px;
+            height: 60px;
+            overflow-y: auto;
+            padding: 6px 10px;
+            font-family: Consolas, monospace;
+            font-size: 11px;
+            color: #94a3b8;
+            white-space: pre-wrap;
+            line-height: 1.5;
+        }
+        #log::-webkit-scrollbar { width: 6px; }
+        #log::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        #log .ok { color: #34d399; }
+        #log .warn { color: #fbbf24; }
+        #log .err { color: #f87171; }
+
+        .results { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+        .results a {
+            color: #fff;
+            background: var(--success);
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 12px;
+            text-decoration: none;
+            font-weight: 700;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: background 0.15s;
+        }
+        .results a:hover { background: var(--success-hover); }
+
+        input[type=file] { display: none; }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="brand">
+        <div class="eyebrow">BROWSER WEBGPU</div>
+        <h1>Web Depth Maker</h1>
+    </div>
+    <div class="badge" id="gpuBadge">检测 WebGPU 状态中...</div>
+    <div class="badge">零后端 · 100% 浏览器本地</div>
+    <div class="spacer"></div>
+    <button id="syncPlayBtn" class="btn-header" disabled>🔗 同步双屏播放</button>
+</header>
+
+<main>
+    <!-- 左侧原视频 -->
+    <div class="panel-head" style="grid-area:ihead">
+        <span class="label">INPUT — 原视频</span>
+        <span class="chip" id="inChip">未选择视频</span>
+    </div>
+
+    <!-- 右侧输出视频 -->
+    <div class="panel-head" style="grid-area:ohead">
+        <span class="label">OUTPUT — 深度转换画面</span>
+        <span class="chip" id="outChip">就绪</span>
+    </div>
+
+    <!-- 原片舞台 -->
+    <div class="stage empty" id="inStage" style="grid-area:istage">
+        <div class="placeholder" id="inPlaceholder">
+            <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 12px;"><path d="M12 17V5"/><path d="m6 9 6-6 6 6"/><path d="M4 19.5h16"/></svg>
+            <div class="dz-title">拖拽视频文件到此处</div>
+            <div class="dz-sub">或点击此处浏览选择 — 支持 MP4 / WebM / MOV 等</div>
+        </div>
+        <video id="inVideo" controls playsinline style="display:none"></video>
+    </div>
+
+    <!-- 深度画面舞台 -->
+    <div class="stage" id="outStage" style="grid-area:ostage">
+        <div class="placeholder" id="outPlaceholder">
+            点击右侧「开始转换」后<br>此处将实时展示 WebGPU 深度渲染过程
+        </div>
+        <canvas id="outCanvas" style="display:none"></canvas>
+        <video id="outVideo" controls playsinline style="display:none"></video>
+    </div>
+
+    <!-- 时间轴裁剪栏 -->
+    <div class="trim-wrap" id="trimWrap" style="grid-area:itrim; display:none">
+        <div class="trimbar" id="trimBar">
+            <canvas id="trimStrip"></canvas>
+            <div class="trim-shade" id="shadeL"></div>
+            <div class="trim-shade" id="shadeR"></div>
+            <div class="trim-region" id="trimRegion"></div>
+            <div class="trim-handle" id="trimL">⋮</div>
+            <div class="trim-handle" id="trimR">⋮</div>
+        </div>
+        <div class="trim-info">
+            <span class="hint" id="rangeInfo"></span>
+            <div class="spacer"></div>
+            <button class="btn-header" id="rangeResetBtn" style="padding: 2px 10px; font-size: 11px;">重置区间</button>
+        </div>
+    </div>
+
+    <!-- 下载结果栏 -->
+    <div class="results" id="results" style="grid-area:otrim; align-self:center;"></div>
+
+    <div class="under" style="grid-area:iunder">
+        <button class="btn-header" id="pickVideoBtn">📁 选择本地视频…</button>
+        <span class="name" id="inName"></span>
+    </div>
+    <input type="file" id="fileInput" accept="video/*">
+
+    <!-- 右侧设置栏 -->
+    <div class="sidebar" style="grid-area:set">
+        <div class="settings">
+            <div class="card">
+                <h3>深度模型 (MODELS)</h3>
+                <div class="row">
+                    <label class="t">选择模型</label>
+                    <select id="depthModel">
+                        <option value="onnx-community/depth-anything-v2-small" selected>Depth Anything V2 — Small (~50MB, 极速推荐)</option>
+                        <option value="onnx-community/depth-anything-v2-base">Depth Anything V2 — Base (~190MB, 高画质)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>画面模式 (DISPLAY MODE)</h3>
+                <div class="row">
+                    <label class="t">排版格式</label>
+                    <select id="mode">
+                        <option value="depth" selected>纯黑白深度视频</option>
+                        <option value="side_by_side">左右分屏对比 (原片 | 深度)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>处理参数 (PROCESSING)</h3>
+                <div class="row">
+                    <label class="t">最大分辨率</label>
+                    <select id="maxSide">
+                        <option value="512">512px (极速省电)</option>
+                        <option value="768" selected>768px (推荐, 画质好且流畅)</option>
+                        <option value="1024">1024px (高清细节)</option>
+                        <option value="0">原始尺寸 (Original)</option>
+                    </select>
+                </div>
+                <div class="row">
+                    <label class="t">处理帧率</label>
+                    <select id="fps">
+                        <option value="15">15 FPS</option>
+                        <option value="24">24 FPS (电影标准, 转换快)</option>
+                        <option value="30" selected>30 FPS (推荐, 流畅度最佳)</option>
+                        <option value="60">60 FPS (高刷源)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>深度风格 (DEPTH STYLE)</h3>
+                <div class="row">
+                    <label class="t">色彩风格</label>
+                    <select id="depthStyle">
+                        <option value="gray" selected>黑白灰度 (Grayscale 0-255)</option>
+                        <option value="inferno">热力图 (Inferno)</option>
+                        <option value="viridis">翠绿图 (Viridis)</option>
+                    </select>
+                </div>
+                <div class="row">
+                    <label class="t">明暗方向</label>
+                    <select id="depthInvert">
+                        <option value="0" selected>近白远黑 (Near=White, 标准)</option>
+                        <option value="1">近黑远白 (Near=Black, 反相)</option>
+                    </select>
+                </div>
+                <div class="row">
+                    <label class="t">抗闪烁平滑</label>
+                    <input type="range" id="temporal" min="0" max="0.9" step="0.05" value="0.35">
+                    <span class="val" id="temporalVal">0.35</span>
+                </div>
+            </div>
+
+            <div class="startrow">
+                <button class="btn-action" id="startBtn" disabled>▶ 开始转换</button>
+                <button class="btn-cancel" id="cancelBtn" disabled>取消</button>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer>
+    <div class="progress-wrap">
+        <div class="progress-bar" id="progressBar"></div>
+        <div class="progress-text" id="progressText">0%</div>
+    </div>
+    <div class="status-line">
+        <span id="statusLine">就绪 — 请选择或拖入视频文件。首次运行将从 Hugging Face CDN 加载轻量模型（自动缓存）。</span>
+        <span id="etaLine"></span>
+    </div>
+    <div id="log"></div>
+</footer>
+
+<script type="module">
+/* ============================================================
+   Web Depth Maker — 100% 浏览器客户端 WebGPU 处理
+   技术栈: @huggingface/transformers@3.5.2 (WebGPU / WASM)
+          mp4-muxer (WebCodecs MP4 零后端纯前端压制)
+   ============================================================ */
+
+const $ = id => document.getElementById(id);
+
+const logEl = $('log');
+function log(msg, cls) {
+    const line = document.createElement('div');
+    if (cls) line.className = cls;
+    line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setStatus(text, eta) {
+    $('statusLine').textContent = text;
+    if (eta !== undefined) $('etaLine').textContent = eta;
+}
+
+function setProgress(pct, text) {
+    $('progressBar').style.width = pct + '%';
+    $('progressText').textContent = text ?? (Math.round(pct) + '%');
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// 滑块数值联动
+$('temporal').addEventListener('input', () => $('temporalVal').textContent = $('temporal').value);
+
+// ---------- 检测 WebGPU 硬件状态 ----------
+async function checkWebGPU() {
+    const badge = $('gpuBadge');
+    if (navigator.gpu) {
+        try {
+            const adapter = await navigator.gpu.requestAdapter();
+            if (adapter) {
+                badge.textContent = '⚡ WebGPU 加速已就绪';
+                badge.style.color = '#34d399';
+                log('浏览器检测到可用 GPU，已开启 WebGPU 原生硬件加速 ✓', 'ok');
+                return;
+            }
+        } catch(e) {}
+    }
+    badge.textContent = '⚠️ CPU WASM 模式';
+    badge.style.color = '#fbbf24';
+    log('当前浏览器未启用 WebGPU，将使用 CPU (WASM) 运行（建议使用最新版 Chrome 或 Edge 获得最高速度）', 'warn');
+}
+checkWebGPU();
+
+// ---------- 视频读取与拖拽 ----------
+const inVideo = $('inVideo');
+let videoFile = null;
+
+function loadVideoFile(file) {
+    if (!file || !file.type.startsWith('video/')) {
+        log('非有效视频格式: ' + (file?.name || ''), 'warn');
+        return;
+    }
+    videoFile = file;
+    inVideo.src = URL.createObjectURL(file);
+    inVideo.style.display = '';
+    $('inPlaceholder').style.display = 'none';
+    $('inStage').classList.remove('empty');
+    $('inName').textContent = file.name;
+
+    inVideo.onloadedmetadata = async () => {
+        if (!isFinite(inVideo.duration)) {
+            inVideo.currentTime = 1e7;
+            await new Promise(r => {
+                const h = () => { if (isFinite(inVideo.duration)) { inVideo.removeEventListener('durationchange', h); r(); } };
+                inVideo.addEventListener('durationchange', h);
+                setTimeout(r, 2000);
+            });
+            inVideo.currentTime = 0;
+        }
+        const d = inVideo.duration;
+        const chip = $('inChip');
+        chip.textContent = `${inVideo.videoWidth}×${inVideo.videoHeight} · ${d.toFixed(1)}秒`;
+        initRange(d);
+        $('startBtn').disabled = false;
+        setStatus(`视频就绪 — ${file.name} (${inVideo.videoWidth}×${inVideo.videoHeight}, ${d.toFixed(1)}秒)，可点击「开始转换」`);
+    };
+}
+
+$('pickVideoBtn').onclick = () => $('fileInput').click();
+$('fileInput').onchange = e => loadVideoFile(e.target.files[0]);
+
+const inStage = $('inStage');
+inStage.addEventListener('dragover', e => { e.preventDefault(); inStage.classList.add('drag'); });
+inStage.addEventListener('dragleave', () => inStage.classList.remove('drag'));
+inStage.addEventListener('drop', e => {
+    e.preventDefault();
+    inStage.classList.remove('drag');
+    if (e.dataTransfer.files.length > 0) loadVideoFile(e.dataTransfer.files[0]);
+});
+inStage.addEventListener('click', () => {
+    if ($('inPlaceholder').style.display !== 'none') $('fileInput').click();
+});
+
+// ---------- 时间轴裁剪栏 (最大单次截取 60 秒) ----------
+const MAX_SEG = 60;
+const rangeSel = { start: 0, end: 0 };
+const trimBar = $('trimBar');
+let stripGen = 0;
+
+function updateRangeInfo() {
+    if (!rangeSel.end) { $('rangeInfo').textContent = ''; return; }
+    const len = rangeSel.end - rangeSel.start;
+    const fps = parseInt($('fps').value);
+    $('rangeInfo').textContent = `选择区间: ${rangeSel.start.toFixed(1)}s – ${rangeSel.end.toFixed(1)}s (时长 ${len.toFixed(1)}s ≈ ${Math.max(1, Math.round(len * fps))} 帧)`;
+}
+
+function layoutTrim() {
+    const d = isFinite(inVideo.duration) ? inVideo.duration : (rangeSel.end || 1);
+    const l = rangeSel.start / d * 100, r = rangeSel.end / d * 100;
+    $('trimRegion').style.left = l + '%';
+    $('trimRegion').style.width = (r - l) + '%';
+    $('trimL').style.left = `calc(${l}% - 7px)`;
+    $('trimR').style.left = `calc(${r}% - 7px)`;
+    $('shadeL').style.left = '0'; $('shadeL').style.width = l + '%';
+    $('shadeR').style.left = r + '%'; $('shadeR').style.width = (100 - r) + '%';
+    updateRangeInfo();
+}
+
+function initRange(duration) {
+    rangeSel.start = 0;
+    rangeSel.end = Math.min(Math.max(0.2, duration), MAX_SEG);
+    $('trimWrap').style.display = '';
+    layoutTrim();
+    buildFilmstrip();
+}
+
+async function buildFilmstrip() {
+    const gen = ++stripGen;
+    const canvas = $('trimStrip');
+    const w = canvas.clientWidth || 640, h = canvas.clientHeight || 46;
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#090a0d'; ctx.fillRect(0, 0, w, h);
+    try {
+        const v = document.createElement('video');
+        v.muted = true; v.preload = 'auto'; v.src = inVideo.src;
+        await new Promise(res => { v.onloadedmetadata = res; v.onerror = res; setTimeout(res, 2000); });
+        const d = isFinite(v.duration) ? v.duration : inVideo.duration;
+        if (!isFinite(d)) return;
+        const n = Math.max(6, Math.min(16, Math.floor(w / 70)));
+        const tw = w / n;
+        for (let i = 0; i < n; i++) {
+            if (gen !== stripGen) return;
+            await new Promise(res => {
+                const to = setTimeout(res, 1200);
+                v.onseeked = () => { clearTimeout(to); res(); };
+                v.currentTime = Math.min((i + 0.5) / n * d, Math.max(0, d - 0.05));
+            });
+            const vw = v.videoWidth, vh = v.videoHeight;
+            if (!vw) continue;
+            const s = Math.max(tw / vw, h / vh);
+            const sw = tw / s, sh = h / s;
+            ctx.drawImage(v, (vw - sw) / 2, (vh - sh) / 2, sw, sh, i * tw, 0, tw, h);
+        }
+        v.removeAttribute('src');
+    } catch(e) {}
+}
+
+function trimTimeFromEvent(ev) {
+    const rect = trimBar.getBoundingClientRect();
+    const d = isFinite(inVideo.duration) ? inVideo.duration : 1;
+    return Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width)) * d;
+}
+
+let dragMode = null, grabOffset = 0;
+function startDrag(mode) {
+    return ev => {
+        if (!rangeSel.end) return;
+        dragMode = mode;
+        grabOffset = trimTimeFromEvent(ev) - rangeSel.start;
+        ev.target.setPointerCapture?.(ev.pointerId);
+        ev.preventDefault();
+    };
+}
+
+$('trimL').addEventListener('pointerdown', startDrag('l'));
+$('trimR').addEventListener('pointerdown', startDrag('r'));
+$('trimRegion').addEventListener('pointerdown', startDrag('m'));
+
+window.addEventListener('pointermove', ev => {
+    if (!dragMode) return;
+    const d = isFinite(inVideo.duration) ? inVideo.duration : rangeSel.end;
+    const tp = trimTimeFromEvent(ev);
+    if (dragMode === 'l') {
+        rangeSel.start = Math.min(Math.max(tp, rangeSel.end - MAX_SEG, 0), rangeSel.end - 0.1);
+        inVideo.currentTime = rangeSel.start;
+    } else if (dragMode === 'r') {
+        rangeSel.end = Math.max(Math.min(tp, rangeSel.start + MAX_SEG, d), rangeSel.start + 0.1);
+        inVideo.currentTime = rangeSel.end;
+    } else {
+        const len = rangeSel.end - rangeSel.start;
+        const ns = Math.min(Math.max(tp - grabOffset, 0), d - len);
+        rangeSel.start = ns; rangeSel.end = ns + len;
+        inVideo.currentTime = ns;
+    }
+    layoutTrim();
+});
+
+window.addEventListener('pointerup', () => { dragMode = null; });
+$('rangeResetBtn').onclick = () => { if (videoFile && isFinite(inVideo.duration)) initRange(inVideo.duration); };
+$('fps').addEventListener('change', updateRangeInfo);
+
+// ---------- 同步播放 ----------
+const outVideoEl = $('outVideo');
+$('syncPlayBtn').onclick = () => {
+    inVideo.currentTime = 0; outVideoEl.currentTime = 0;
+    inVideo.play(); outVideoEl.play();
+};
+
+// ---------- 调色板映射 (LUT) ----------
+const CMAP_ANCHORS = {
+    inferno: [[0,0,4],[87,16,110],[188,55,84],[249,142,9],[252,255,164]],
+    viridis: [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]],
+};
+
+function makeLUT(name) {
+    const lut = new Uint8Array(256 * 3);
+    if (name === 'gray') {
+        for (let i = 0; i < 256; i++) {
+            lut[i * 3] = i; lut[i * 3 + 1] = i; lut[i * 3 + 2] = i;
+        }
+        return lut;
+    }
+    const a = CMAP_ANCHORS[name] || CMAP_ANCHORS.inferno;
+    for (let i = 0; i < 256; i++) {
+        const t2 = i / 255 * (a.length - 1);
+        const k = Math.min(a.length - 2, Math.floor(t2));
+        const f = t2 - k;
+        for (let c = 0; c < 3; c++) {
+            lut[i * 3 + c] = Math.round(a[k][c] * (1 - f) + a[k + 1][c] * f);
+        }
+    }
+    return lut;
+}
+
+// ---------- 异步加载 transformers.js 深度模型 ----------
+let transformersMod = null, depthPipe = null, depthPipeKey = '';
+
+async function ensureDepth(modelId) {
+    if (depthPipe && depthPipeKey === modelId) return;
+
+    if (!transformersMod) {
+        setStatus('正在加载 Transformers.js Web 运行时…');
+        log('从 CDN 导入 @huggingface/transformers.js 模块…');
+        transformersMod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2/+esm');
+        transformersMod.env.allowLocalModels = false;
+        if (!('caches' in self)) transformersMod.env.useBrowserCache = false;
+    }
+
+    const { pipeline } = transformersMod;
+    let lastLogged = {};
+    const progress_callback = p => {
+        if (p.status === 'progress' && p.total) {
+            const pct = Math.round(p.loaded / p.total * 100);
+            if (pct !== lastLogged[p.file] && pct % 10 === 0) {
+                lastLogged[p.file] = pct;
+                const mbLoaded = (p.loaded / 1024 / 1024).toFixed(1);
+                const mbTotal = (p.total / 1024 / 1024).toFixed(1);
+                setProgress(pct, `正在下载 AI 模型: ${pct}% (${mbLoaded}MB / ${mbTotal}MB)`);
+                setStatus(`正在下载模型文件 ${p.file}: ${pct}% (首次下载后将缓存在浏览器)`);
+            }
+        }
+    };
+
+    setStatus('正在装载深度估计模型 (首次运行将下载模型权重)…');
+    const hasWebGPU = !!navigator.gpu;
+    try {
+        if (!hasWebGPU) throw new Error('WebGPU unsupported');
+        depthPipe = await pipeline('depth-estimation', modelId, { device: 'webgpu', dtype: 'fp16', progress_callback });
+        log(`Depth Anything V2 [WebGPU 加速版] 加载成功！`, 'ok');
+    } catch(e) {
+        log(`WebGPU 无法使用，回退到 CPU WASM 模式: ${e.message}`, 'warn');
+        depthPipe = await pipeline('depth-estimation', modelId, { progress_callback });
+        log(`Depth Anything V2 [CPU WASM 版] 加载成功！`, 'ok');
+    }
+    depthPipeKey = modelId;
+}
+
+// ---------- 精准时间跳转 ----------
+function seekTo(video, tSec) {
+    return new Promise((resolve) => {
+        const timer = setTimeout(() => { cleanup(); resolve(); }, 3000);
+        function onSeeked() { cleanup(); resolve(); }
+        function cleanup() { clearTimeout(timer); video.removeEventListener('seeked', onSeeked); }
+        video.addEventListener('seeked', onSeeked);
+        video.currentTime = tSec;
+    });
+}
+
+// ---------- 主流程控制 ----------
+let cancelled = false;
+let running = false;
+
+$('cancelBtn').onclick = () => {
+    cancelled = true;
+    setStatus('正在取消当前任务…');
+};
+
+$('startBtn').onclick = async () => {
+    if (running || !videoFile) return;
+    running = true;
+    cancelled = false;
+    $('startBtn').disabled = true;
+    $('cancelBtn').disabled = false;
+    $('results').innerHTML = '';
+    $('syncPlayBtn').disabled = true;
+
+    try {
+        await runExtraction();
+    } catch(e) {
+        console.error(e);
+        log('发生错误: ' + (e?.message || e), 'err');
+        setStatus('转换中断：' + (e?.message || e));
+    } finally {
+        running = false;
+        $('startBtn').disabled = false;
+        $('cancelBtn').disabled = true;
+    }
+};
+
+async function runExtraction() {
+    const mode = $('mode').value;
+    const fps = parseInt($('fps').value);
+    const maxSide = parseInt($('maxSide').value);
+    const style = $('depthStyle').value;
+    const invert = $('depthInvert').value === '1';
+    const temporal = parseFloat($('temporal').value);
+
+    // 1. 加载模型
+    setProgress(0, '正在准备模型…');
+    await ensureDepth($('depthModel').value);
+    if (cancelled) { setStatus('任务已取消'); setProgress(0, '已取消'); return; }
+
+    // 2. 分辨率适配（保持偶数以便 H.264 编码）
+    const vw = inVideo.videoWidth, vh = inVideo.videoHeight;
+    let scale = 1;
+    if (maxSide > 0 && Math.max(vw, vh) > maxSide) scale = maxSide / Math.max(vw, vh);
+    const W = Math.round(vw * scale / 2) * 2;
+    const H = Math.round(vh * scale / 2) * 2;
+
+    // 最终输出宽度
+    const finalW = (mode === 'side_by_side') ? W * 2 : W;
+    const finalH = H;
+
+    const duration = inVideo.duration;
+    const selStart = Math.min(rangeSel.start, Math.max(0, duration - 0.2));
+    const selEnd = Math.min(Math.max(rangeSel.end || duration, selStart + 0.1), duration);
+    const segDur = selEnd - selStart;
+    const total = Math.max(1, Math.round(segDur * fps));
+
+    log(`开始渲染: ${finalW}×${finalH}, ${fps} FPS, 共 ${total} 帧 (截取时长: ${segDur.toFixed(1)}秒)`);
+    setStatus(`正在转换… ${finalW}×${finalH}, ${fps} FPS, 总计 ${total} 帧`);
+
+    // 画布准备
+    const srcCanvas = document.createElement('canvas');
+    srcCanvas.width = W; srcCanvas.height = H;
+    const sctx = srcCanvas.getContext('2d', { willReadFrequently: true });
+
+    const outCanvas = $('outCanvas');
+    outCanvas.width = finalW; outCanvas.height = finalH;
+    const octx = outCanvas.getContext('2d');
+    outCanvas.style.display = '';
+    outVideoEl.style.display = 'none';
+    $('outPlaceholder').style.display = 'none';
+
+    const lut = makeLUT(style);
+    const depthCanvas = document.createElement('canvas');
+    const dctx = depthCanvas.getContext('2d');
+    let smoothBuf = null;
+
+    const { RawImage } = transformersMod || {};
+    inVideo.pause();
+
+    const frames = [];
+    const t0 = performance.now();
+
+    for (let i = 0; i < total; i++) {
+        if (cancelled) break;
+
+        const tSec = Math.min(selStart + i / fps, Math.max(0, duration - 0.001));
+        await seekTo(inVideo, tSec);
+        sctx.drawImage(inVideo, 0, 0, W, H);
+
+        // WebGPU 深度估计
+        const id = sctx.getImageData(0, 0, W, H);
+        const img = new RawImage(id.data, W, H, 4);
+        const out = await depthPipe(img);
+        const d = out.depth;
+        const dw = d.width, dh = d.height, dd = d.data;
+
+        // 时间平滑滤波 (指数移动平均) 抑制帧间闪烁
+        if (!smoothBuf || smoothBuf.length !== dw * dh) {
+            smoothBuf = new Float32Array(dw * dh);
+            smoothBuf.set(dd);
+        }
+        const imgData = new ImageData(dw, dh);
+        const px = imgData.data;
+        const a = temporal, b = 1 - temporal;
+        for (let j = 0; j < dw * dh; j++) {
+            const sm = smoothBuf[j] = smoothBuf[j] * a + dd[j] * b;
+            let v = Math.max(0, Math.min(255, Math.round(sm)));
+            if (invert) v = 255 - v;
+            px[j * 4]     = lut[v * 3];
+            px[j * 4 + 1] = lut[v * 3 + 1];
+            px[j * 4 + 2] = lut[v * 3 + 2];
+            px[j * 4 + 3] = 255;
+        }
+        if (depthCanvas.width !== dw) { depthCanvas.width = dw; depthCanvas.height = dh; }
+        dctx.putImageData(imgData, 0, 0);
+
+        // 合成画面
+        if (mode === 'side_by_side') {
+            octx.drawImage(srcCanvas, 0, 0, W, H);
+            octx.drawImage(depthCanvas, W, 0, W, H);
+        } else {
+            octx.drawImage(depthCanvas, 0, 0, W, H);
+        }
+
+        // 收集帧 Blob
+        frames.push(await new Promise(r => outCanvas.toBlob(r, 'image/jpeg', 0.92)));
+
+        const pct = (i + 1) / total * 88;
+        const elapsed = (performance.now() - t0) / 1000;
+        const eta = elapsed / (i + 1) * (total - i - 1);
+        const etaStr = eta > 60 ? `${Math.ceil(eta/60)} 分钟` : `${Math.ceil(eta)} 秒`;
+        setProgress(pct, `第 ${i + 1}/${total} 帧 (${Math.round(pct)}%)`);
+        setStatus(`正在进行 WebGPU 深度估计… [${i + 1}/${total} 帧]`, `预计剩余: ${etaStr}`);
+    }
+
+    if (cancelled) { setStatus('任务已取消'); setProgress(0, '已取消'); return; }
+
+    // 3. 编码压制为 MP4 视频
+    setStatus('正在进行 WebCodecs 纯前端压制导出 MP4…');
+    const videoBlob = await encodeFrames(frames, fps, finalW, finalH);
+    if (cancelled) { setStatus('任务已取消'); setProgress(0, '已取消'); return; }
+
+    // 4. 生成下载链接
+    const base = videoFile.name.replace(/\.[^.]+$/, '');
+    const vidExt = videoBlob.type.includes('mp4') ? 'mp4' : 'webm';
+    const vidName = `${base}_depth_${mode}.${vidExt}`;
+
+    const resEl = $('results');
+    resEl.innerHTML = '';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(videoBlob);
+    a.download = vidName;
+    a.innerHTML = `📥 下载深度视频 (${vidName}) · ${(videoBlob.size / 1024 / 1024).toFixed(1)} MB`;
+    resEl.appendChild(a);
+
+    // 5. 输出预览
+    outVideoEl.src = URL.createObjectURL(videoBlob);
+    outVideoEl.style.display = '';
+    outCanvas.style.display = 'none';
+    const outChip = $('outChip');
+    outChip.textContent = `${vidName} · ${frames.length}帧 · ${(frames.length/fps).toFixed(1)}秒`;
+    $('syncPlayBtn').disabled = false;
+
+    const totalSec = ((performance.now() - t0) / 1000).toFixed(1);
+    setProgress(100, '100% 完成');
+    setStatus(`🎉 转换全部完成！共处理 ${frames.length} 帧（总耗时 ${totalSec} 秒）`);
+    log(`处理完毕！总用时: ${totalSec} 秒，点击右下角按钮即可保存 MP4`, 'ok');
+}
+
+// ---------- 纯前端视频编码 (WebCodecs + mp4-muxer) ----------
+async function encodeFrames(frames, fps, W, H) {
+    if ('VideoEncoder' in window) {
+        try {
+            return await encodeFramesWebCodecs(frames, fps, W, H);
+        } catch(e) {
+            log('WebCodecs 硬件编码异常，回退到 MediaRecorder 录制: ' + e.message, 'warn');
+        }
+    }
+    return encodeFramesRealtime(frames, fps, W, H);
+}
+
+async function pickAvcCodec(W, H, fps) {
+    for (const codec of ['avc1.640033','avc1.64002A','avc1.640028','avc1.4D0028','avc1.42E01F']) {
+        try {
+            const { supported } = await VideoEncoder.isConfigSupported({ codec, width: W, height: H, framerate: fps });
+            if (supported) return codec;
+        } catch(e) {}
+    }
+    return null;
+}
+
+async function encodeFramesWebCodecs(frames, fps, W, H) {
+    const { Muxer, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/+esm');
+    const codec = await pickAvcCodec(W, H, fps);
+    if (!codec) throw new Error('当前浏览器未提供支持该分辨率的 H.264 编码器');
+
+    const target = new ArrayBufferTarget();
+    const muxer = new Muxer({
+        target,
+        video: { codec: 'avc', width: W, height: H },
+        fastStart: 'in-memory',
+    });
+
+    let encError = null;
+    const encoder = new VideoEncoder({
+        output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+        error: e => { encError = e; },
+    });
+
+    encoder.configure({ codec, width: W, height: H, framerate: fps, bitrate: 12_000_000 });
+    const usPerFrame = 1_000_000 / fps;
+
+    for (let i = 0; i < frames.length; i++) {
+        if (cancelled) break;
+        if (encError) throw encError;
+        const bmp = await createImageBitmap(frames[i]);
+        const vf = new VideoFrame(bmp, { timestamp: Math.round(i * usPerFrame), duration: Math.round(usPerFrame) });
+        encoder.encode(vf, { keyFrame: i % (fps * 2) === 0 });
+        vf.close(); bmp.close();
+
+        if (encoder.encodeQueueSize > 8) {
+            await new Promise(r => encoder.addEventListener('dequeue', r, { once: true }));
+        }
+        if (i % Math.max(1, fps) === 0) {
+            const p = 88 + (i / frames.length) * 12;
+            setProgress(p, `编码 MP4 中: ${Math.round(i / frames.length * 100)}%`);
+        }
+    }
+    await encoder.flush();
+    if (encError) throw encError;
+    encoder.close();
+    muxer.finalize();
+    return new Blob([target.buffer], { type: 'video/mp4' });
+}
+
+async function encodeFramesRealtime(frames, fps, W, H) {
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const ctx = c.getContext('2d');
+    const first = await createImageBitmap(frames[0]);
+    ctx.drawImage(first, 0, 0);
+
+    const stream = c.captureStream(fps);
+    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 10_000_000 });
+    const chunks = [];
+    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    const done = new Promise(res => rec.onstop = res);
+    rec.start(500);
+
+    const interval = 1000 / fps;
+    let next = performance.now();
+    let cur = first;
+    for (let i = 0; i < frames.length; i++) {
+        if (cancelled) break;
+        ctx.drawImage(cur, 0, 0);
+        if (cur !== first || i > 0) cur.close?.();
+        const nextP = i + 1 < frames.length ? createImageBitmap(frames[i + 1]) : null;
+        next += interval;
+        const wait = next - performance.now();
+        if (wait > 0) await sleep(wait);
+        if (nextP) cur = await nextP;
+    }
+    await sleep(interval * 2);
+    rec.stop();
+    await done;
+    return new Blob(chunks, { type: mime });
+}
+
+log('Web Depth Maker 已加载就绪。一切计算均在您当前浏览器的 WebGPU 硬件中运行。');
+</script>
+</body>
+</html>
