@@ -637,6 +637,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // 滑块数值联动
 $('temporal').addEventListener('input', () => $('temporalVal').textContent = $('temporal').value);
+$('fps').addEventListener('change', updateRangeInfo);
 
 // ---------- 检测 WebGPU 硬件状态 ----------
 async function checkWebGPU() {
@@ -658,14 +659,76 @@ async function checkWebGPU() {
 }
 checkWebGPU();
 
-// ---------- 智能原视频帧率探测 (零阻塞、超高容错) ----------
+// ---------- 智能原视频帧率探测 (硬件解码器探测 + 容器头双重校验) ----------
 let detectedFps = 30;
 
-function searchBox(u8, tag, start = 0) {
-    if (!u8 || start >= u8.length - 4) return -1;
+// 1. 标准常用视频帧率匹配辅助
+function snapToStandardFps(raw) {
+    if (!raw || raw < 5 || raw > 240) return null;
+    const standards = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 120];
+    for (const s of standards) {
+        if (Math.abs(raw - s) / s < 0.035) return s;
+    }
+    return Math.round(raw * 100) / 100;
+}
+
+// 2. 方式 A: 通过浏览器硬件解码器 (requestVideoFrameCallback) 毫秒级实测帧间隔
+function probeFpsWithHardwareDecoder(videoSrc) {
+    return new Promise((resolve) => {
+        if (!('requestVideoFrameCallback' in HTMLVideoElement.prototype)) {
+            resolve(null);
+            return;
+        }
+        const v = document.createElement('video');
+        v.muted = true;
+        v.preload = 'auto';
+        v.src = videoSrc;
+
+        let frames = [];
+        let done = false;
+        const cleanup = () => {
+            if (done) return;
+            done = true;
+            try { v.pause(); v.removeAttribute('src'); v.load(); } catch(e) {}
+        };
+
+        const timer = setTimeout(() => { cleanup(); resolve(null); }, 1500);
+
+        v.onloadeddata = () => {
+            v.play().catch(() => {});
+            function onFrame(now, metadata) {
+                if (done) return;
+                frames.push(metadata.mediaTime);
+                if (frames.length >= 7) {
+                    cleanup();
+                    clearTimeout(timer);
+                    const diffs = [];
+                    for (let i = 1; i < frames.length; i++) {
+                        const dt = frames[i] - frames[i - 1];
+                        if (dt > 0.005 && dt < 0.2) diffs.push(dt);
+                    }
+                    if (diffs.length >= 3) {
+                        diffs.sort((a, b) => a - b);
+                        const median = diffs[Math.floor(diffs.length / 2)];
+                        const fps = snapToStandardFps(1 / median);
+                        if (fps) { resolve(fps); return; }
+                    }
+                    resolve(null);
+                } else {
+                    v.requestVideoFrameCallback(onFrame);
+                }
+            }
+            v.requestVideoFrameCallback(onFrame);
+        };
+        v.onerror = () => { cleanup(); resolve(null); };
+    });
+}
+
+// 3. 方式 B: MP4 二进制容器解析 (针对特定 vide 轨)
+function searchBox(u8, tag, start = 0, limit = u8.length - 4) {
+    if (!u8 || start >= limit) return -1;
     const b0 = tag.charCodeAt(0), b1 = tag.charCodeAt(1), b2 = tag.charCodeAt(2), b3 = tag.charCodeAt(3);
-    const maxIdx = u8.length - 4;
-    for (let i = start; i <= maxIdx; i++) {
+    for (let i = start; i <= limit; i++) {
         if (u8[i] === b0 && u8[i+1] === b1 && u8[i+2] === b2 && u8[i+3] === b3) return i;
     }
     return -1;
@@ -675,27 +738,35 @@ function parseFpsFromChunk(buf) {
     try {
         const u8 = new Uint8Array(buf);
         const dv = new DataView(buf);
-        let timescale = 0;
-        let p = 0, steps = 0;
 
-        while ((p = searchBox(u8, 'mdhd', p)) !== -1 && steps++ < 8) {
-            if (p + 28 <= u8.length) {
-                const ver = u8[p + 4];
-                timescale = (ver === 0) ? dv.getUint32(p + 16) : dv.getUint32(p + 24);
-            }
-            p += 4;
+        // 优先定位 'vide' (视频处理轨，避免被 48000Hz 音频轨干扰)
+        let videIdx = searchBox(u8, 'vide');
+        let searchRangeStart = 0;
+        let searchRangeEnd = u8.length - 4;
+
+        if (videIdx !== -1) {
+            // 在 vide 前后 8KB 局部精确查找 mdhd 和 stts
+            searchRangeStart = Math.max(0, videIdx - 8192);
+            searchRangeEnd = Math.min(u8.length - 4, videIdx + 8192);
         }
 
-        const sttsIdx = searchBox(u8, 'stts');
-        if (sttsIdx !== -1 && timescale > 0 && sttsIdx + 20 <= u8.length) {
+        let mdhdIdx = searchBox(u8, 'mdhd', searchRangeStart, searchRangeEnd);
+        let sttsIdx = searchBox(u8, 'stts', searchRangeStart, searchRangeEnd);
+
+        // 如果局部没搜到，全段再搜一次
+        if (mdhdIdx === -1) mdhdIdx = searchBox(u8, 'mdhd');
+        if (sttsIdx === -1) sttsIdx = searchBox(u8, 'stts');
+
+        if (mdhdIdx !== -1 && sttsIdx !== -1 && mdhdIdx + 28 <= u8.length && sttsIdx + 20 <= u8.length) {
+            const ver = u8[mdhdIdx + 4];
+            const timescale = (ver === 0) ? dv.getUint32(mdhdIdx + 16) : dv.getUint32(mdhdIdx + 24);
             const count = dv.getUint32(sttsIdx + 8);
             if (count > 0) {
                 const delta = dv.getUint32(sttsIdx + 16);
-                if (delta > 0) {
+                if (timescale > 0 && delta > 0) {
                     const raw = timescale / delta;
-                    if (raw >= 10 && raw <= 144) {
-                        return Math.round(raw * 100) / 100;
-                    }
+                    const fps = snapToStandardFps(raw);
+                    if (fps) return fps;
                 }
             }
         }
@@ -703,24 +774,36 @@ function parseFpsFromChunk(buf) {
     return null;
 }
 
-async function detectVideoFps(file) {
+async function detectVideoFps(file, videoSrc) {
     if (!file) return 30;
     try {
-        // 仅读头部 512KB (极速，绝不占用内存)
-        const headSize = Math.min(file.size, 512 * 1024);
-        const headBuf = await file.slice(0, headSize).arrayBuffer();
-        const fps = parseFpsFromChunk(headBuf);
-        if (fps) return fps;
+        // 双管齐下：优先采用硬件解码器实测 (最准)，同时尝试 MP4 容器头解析
+        const hwPromise = videoSrc ? probeFpsWithHardwareDecoder(videoSrc) : Promise.resolve(null);
+        
+        // 尝试解析 MP4 头部 2MB 或 尾部 2MB
+        const binaryPromise = (async () => {
+            const headSize = Math.min(file.size, 2 * 1024 * 1024);
+            const headBuf = await file.slice(0, headSize).arrayBuffer();
+            let fps = parseFpsFromChunk(headBuf);
+            if (fps) return fps;
 
-        // 若头部无 moov (针对后置 moov 视频)，读尾部 512KB
-        if (file.size > headSize) {
-            const tailSize = Math.min(file.size, 512 * 1024);
-            const tailBuf = await file.slice(file.size - tailSize).arrayBuffer();
-            const tailFps = parseFpsFromChunk(tailBuf);
-            if (tailFps) return tailFps;
-        }
-    } catch(e) {}
-    return 30;
+            if (file.size > headSize) {
+                const tailSize = Math.min(file.size, 2 * 1024 * 1024);
+                const tailBuf = await file.slice(file.size - tailSize).arrayBuffer();
+                fps = parseFpsFromChunk(tailBuf);
+                if (fps) return fps;
+            }
+            return null;
+        })();
+
+        // 哪个先算出结果就用哪个
+        const results = await Promise.all([hwPromise, binaryPromise]);
+        if (results[0]) return results[0]; // 硬件解码器测得的真实渲染帧率
+        if (results[1]) return results[1]; // 容器头解析帧率
+    } catch(e) {
+        console.warn('FPS 探测提示:', e);
+    }
+    return 30; // 默认兜底
 }
 
 // ---------- 视频读取与拖拽 ----------
@@ -750,17 +833,16 @@ function loadVideoFile(file) {
         $('startBtn').disabled = false;
         setStatus(`视频就绪 — ${file.name} (${inVideo.videoWidth}×${inVideo.videoHeight}, ${d.toFixed(1)}秒)，可点击「开始转换」`);
 
-        // 后台静默探测原片真实帧率 (完全不影响主界面操作)
+        // 后台双引擎精准实测原片帧率 (完全不影响主界面操作)
         setTimeout(() => {
-            detectVideoFps(file).then(fps => {
+            detectVideoFps(file, inVideo.src).then(fps => {
                 if (fps) {
                     detectedFps = fps;
                     const opt = $('fpsAutoOption');
                     if (opt) opt.textContent = `保持原片帧率 (推荐, 已检测: ${detectedFps} FPS)`;
-                    if (!chip.textContent.includes('FPS')) {
-                        chip.textContent += ` · ${detectedFps} FPS`;
-                    }
-                    log(`原视频帧率解析完成: ${detectedFps} FPS ✓`, 'ok');
+                    chip.textContent = `${inVideo.videoWidth || 0}×${inVideo.videoHeight || 0} · ${d.toFixed(1)}秒 · ${detectedFps} FPS`;
+                    updateRangeInfo();
+                    log(`原视频真实帧率已识别: ${detectedFps} FPS ✓`, 'ok');
                 }
             }).catch(() => {});
         }, 30);
