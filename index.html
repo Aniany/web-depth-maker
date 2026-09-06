@@ -544,10 +544,12 @@
                 <div class="row">
                     <label class="t">处理帧率</label>
                     <select id="fps">
-                        <option value="15">15 FPS</option>
-                        <option value="24">24 FPS (电影标准, 转换快)</option>
-                        <option value="30" selected>30 FPS (推荐, 流畅度最佳)</option>
-                        <option value="60">60 FPS (高刷源)</option>
+                        <option value="auto" id="fpsAutoOption" selected>保持原片帧率 (推荐, 自动检测)</option>
+                        <option value="15">15 FPS (低帧率, 极速转换)</option>
+                        <option value="24">24 FPS (电影标准, 速度快)</option>
+                        <option value="25">25 FPS (PAL 电视广播标准)</option>
+                        <option value="30">30 FPS (常见高清流畅)</option>
+                        <option value="60">60 FPS (高刷新率)</option>
                     </select>
                 </div>
                 <div class="row">
@@ -656,6 +658,85 @@ async function checkWebGPU() {
 }
 checkWebGPU();
 
+// ---------- 智能原视频帧率探测 ----------
+let detectedFps = 30;
+
+async function detectVideoFps(file) {
+    if (!file) return 30;
+    try {
+        const readSize = Math.min(file.size, 3 * 1024 * 1024);
+        const buf = await file.slice(0, readSize).arrayBuffer();
+        const u8 = new Uint8Array(buf);
+        const dv = new DataView(buf);
+
+        function findTag(tag, start = 0) {
+            const b0 = tag.charCodeAt(0), b1 = tag.charCodeAt(1), b2 = tag.charCodeAt(2), b3 = tag.charCodeAt(3);
+            for (let i = start; i <= u8.length - 4; i++) {
+                if (u8[i] === b0 && u8[i+1] === b1 && u8[i+2] === b2 && u8[i+3] === b3) return i;
+            }
+            return -1;
+        }
+
+        let mdhdIdx = -1, timescale = 0, p = 0;
+        while ((p = findTag('mdhd', p)) !== -1) {
+            const version = u8[p + 4];
+            timescale = version === 0 ? dv.getUint32(p + 16) : dv.getUint32(p + 24);
+            p += 4;
+        }
+
+        const sttsIdx = findTag('stts');
+        if (sttsIdx !== -1 && timescale > 0) {
+            const entryCount = dv.getUint32(sttsIdx + 8);
+            if (entryCount > 0) {
+                const sampleDelta = dv.getUint32(sttsIdx + 16);
+                if (sampleDelta > 0) {
+                    const rawFps = timescale / sampleDelta;
+                    if (rawFps >= 5 && rawFps <= 240) {
+                        return Math.round(rawFps * 100) / 100;
+                    }
+                }
+            }
+        }
+
+        // 文件末尾探测 (针对非 faststart 封装)
+        if (file.size > readSize) {
+            const tailSize = Math.min(file.size, 3 * 1024 * 1024);
+            const tailBuf = await file.slice(file.size - tailSize).arrayBuffer();
+            const tailU8 = new Uint8Array(tailBuf);
+            const tailDv = new DataView(tailBuf);
+            function findTailTag(tag) {
+                const b0 = tag.charCodeAt(0), b1 = tag.charCodeAt(1), b2 = tag.charCodeAt(2), b3 = tag.charCodeAt(3);
+                for (let i = 0; i <= tailU8.length - 4; i++) {
+                    if (tailU8[i] === b0 && tailU8[i+1] === b1 && tailU8[i+2] === b2 && tailU8[i+3] === b3) return i;
+                }
+                return -1;
+            }
+            let tP = 0, tailTimescale = 0;
+            while ((tP = findTailTag('mdhd', tP)) !== -1) {
+                const ver = tailU8[tP + 4];
+                tailTimescale = ver === 0 ? tailDv.getUint32(tP + 16) : tailDv.getUint32(tP + 24);
+                tP += 4;
+            }
+            const tailStts = findTailTag('stts');
+            if (tailStts !== -1 && tailTimescale > 0) {
+                const entryCount = tailDv.getUint32(tailStts + 8);
+                if (entryCount > 0) {
+                    const sampleDelta = tailDv.getUint32(tailStts + 16);
+                    if (sampleDelta > 0) {
+                        const rawFps = tailTimescale / sampleDelta;
+                        if (rawFps >= 5 && rawFps <= 240) {
+                            return Math.round(rawFps * 100) / 100;
+                        }
+                    }
+                }
+            }
+        }
+    } catch(e) {
+        console.warn('FPS 探测异常:', e);
+    }
+    return 30;
+}
+
 // ---------- 视频读取与拖拽 ----------
 const inVideo = $('inVideo');
 let videoFile = null;
@@ -688,6 +769,17 @@ function loadVideoFile(file) {
         initRange(d);
         $('startBtn').disabled = false;
         setStatus(`视频就绪 — ${file.name} (${inVideo.videoWidth}×${inVideo.videoHeight}, ${d.toFixed(1)}秒)，可点击「开始转换」`);
+
+        // 异步精准探测原片帧率
+        detectVideoFps(file).then(fps => {
+            detectedFps = fps;
+            const opt = $('fpsAutoOption');
+            if (opt) opt.textContent = `保持原片帧率 (推荐, 已检测: ${detectedFps} FPS)`;
+            if (!chip.textContent.includes('FPS')) {
+                chip.textContent += ` · ${detectedFps} FPS`;
+            }
+            log(`视频已解析，原片实际帧率: ${detectedFps} FPS ✓`, 'ok');
+        });
     };
 }
 
@@ -715,7 +807,7 @@ let stripGen = 0;
 function updateRangeInfo() {
     if (!rangeSel.end) { $('rangeInfo').textContent = ''; return; }
     const len = rangeSel.end - rangeSel.start;
-    const fps = parseInt($('fps').value);
+    const fpsVal = $('fps').value; const fps = (fpsVal === 'auto') ? detectedFps : parseFloat(fpsVal);
     $('rangeInfo').textContent = `选择区间: ${rangeSel.start.toFixed(1)}s – ${rangeSel.end.toFixed(1)}s (时长 ${len.toFixed(1)}s ≈ ${Math.max(1, Math.round(len * fps))} 帧)`;
 }
 
