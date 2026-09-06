@@ -883,7 +883,9 @@ function updateRangeInfo() {
     if (!rangeSel.end) { $('rangeInfo').textContent = ''; return; }
     const len = rangeSel.end - rangeSel.start;
     const fpsVal = $('fps').value; const fps = (fpsVal === 'auto') ? detectedFps : parseFloat(fpsVal);
-    $('rangeInfo').textContent = `选择区间: ${rangeSel.start.toFixed(1)}s – ${rangeSel.end.toFixed(1)}s (时长 ${len.toFixed(1)}s ≈ ${Math.max(1, Math.round(len * fps))} 帧)`;
+    const nomFps = Math.max(1, Math.round(fps));
+    const totalFrames = Math.max(1, Math.round(len * nomFps));
+    $('rangeInfo').textContent = `选择区间: ${rangeSel.start.toFixed(1)}s – ${rangeSel.end.toFixed(1)}s (时长 ${len.toFixed(1)}s ≈ ${totalFrames} 帧)`;
 }
 
 function layoutTrim() {
@@ -1153,11 +1155,12 @@ async function runExtraction() {
     const selStart = Math.min(rangeSel.start, Math.max(0, duration - 0.2));
     const selEnd = Math.min(Math.max(rangeSel.end || duration, selStart + 0.1), duration);
     const segDur = Math.max(0.1, selEnd - selStart);
-    const total = Math.max(1, Math.round(segDur * fps));
+    // 使用标称整数帧率（如 60, 30, 24）计算总帧数，杜绝 59.94 等小数帧率舍入导致差 0.02 秒被浏览器进度条截断少显示 1 秒 (如 13.98s 显示为 13s)
+    const nomFps = Math.max(1, Math.round(fps));
+    const total = Math.max(1, Math.round(segDur * nomFps));
 
-    const displayFps = Math.round(fps);
-    log(`开始渲染: ${finalW}×${finalH}, ${displayFps} FPS (基准: ${fps.toFixed(2)}), 共 ${total} 帧 (截取时长: ${segDur.toFixed(1)}秒)`);
-    setStatus(`正在转换… ${finalW}×${finalH}, ${displayFps} FPS, 总计 ${total} 帧`);
+    log(`开始渲染: ${finalW}×${finalH}, ${nomFps} FPS (基准: ${fps.toFixed(2)}), 共 ${total} 帧 (截取时长: ${segDur.toFixed(1)}秒)`);
+    setStatus(`正在转换… ${finalW}×${finalH}, ${nomFps} FPS, 总计 ${total} 帧`);
 
     // 画布准备
     const srcCanvas = document.createElement('canvas');
@@ -1185,7 +1188,7 @@ async function runExtraction() {
     for (let i = 0; i < total; i++) {
         if (cancelled) break;
 
-        const tSec = Math.min(selStart + i / fps, Math.max(0, duration - 0.001));
+        const tSec = Math.min(selStart + i / nomFps, Math.max(0, duration - 0.001));
         await seekTo(inVideo, tSec);
         sctx.drawImage(inVideo, 0, 0, W, H);
 
@@ -1290,7 +1293,7 @@ async function runExtraction() {
     outVideoEl.style.display = '';
     outCanvas.style.display = 'none';
     const outChip = $('outChip');
-    outChip.textContent = `${vidName} · ${frames.length}帧 · ${(frames.length/fps).toFixed(1)}秒`;
+    outChip.textContent = `${vidName} · ${frames.length}帧 · ${(frames.length/nomFps).toFixed(1)}秒`;
     $('syncPlayBtn').disabled = false;
 
     const totalSec = ((performance.now() - t0) / 1000).toFixed(1);
@@ -1414,7 +1417,8 @@ async function encodeFramesWebCodecs(frames, fps, W, H, audioBuffer, selStart, s
         framerate: intFps,
         bitrate: Math.min(25_000_000, Math.max(4_000_000, Math.round(W * H * intFps * 0.14)))
     });
-    const usPerFrame = 1_000_000 / fps;
+    // 精确使用 intFps 计算微秒间隔，确保 N 帧生成的容器总时长精确达到满秒 (N / intFps)，不产生微小浮点缺口
+    const usPerFrame = 1_000_000 / intFps;
 
     // 1. 压制视频帧
     for (let i = 0; i < validFrames.length; i++) {
