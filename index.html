@@ -658,82 +658,68 @@ async function checkWebGPU() {
 }
 checkWebGPU();
 
-// ---------- 智能原视频帧率探测 ----------
+// ---------- 智能原视频帧率探测 (零阻塞、超高容错) ----------
 let detectedFps = 30;
+
+function searchBox(u8, tag, start = 0) {
+    if (!u8 || start >= u8.length - 4) return -1;
+    const b0 = tag.charCodeAt(0), b1 = tag.charCodeAt(1), b2 = tag.charCodeAt(2), b3 = tag.charCodeAt(3);
+    const maxIdx = u8.length - 4;
+    for (let i = start; i <= maxIdx; i++) {
+        if (u8[i] === b0 && u8[i+1] === b1 && u8[i+2] === b2 && u8[i+3] === b3) return i;
+    }
+    return -1;
+}
+
+function parseFpsFromChunk(buf) {
+    try {
+        const u8 = new Uint8Array(buf);
+        const dv = new DataView(buf);
+        let timescale = 0;
+        let p = 0, steps = 0;
+
+        while ((p = searchBox(u8, 'mdhd', p)) !== -1 && steps++ < 8) {
+            if (p + 28 <= u8.length) {
+                const ver = u8[p + 4];
+                timescale = (ver === 0) ? dv.getUint32(p + 16) : dv.getUint32(p + 24);
+            }
+            p += 4;
+        }
+
+        const sttsIdx = searchBox(u8, 'stts');
+        if (sttsIdx !== -1 && timescale > 0 && sttsIdx + 20 <= u8.length) {
+            const count = dv.getUint32(sttsIdx + 8);
+            if (count > 0) {
+                const delta = dv.getUint32(sttsIdx + 16);
+                if (delta > 0) {
+                    const raw = timescale / delta;
+                    if (raw >= 10 && raw <= 144) {
+                        return Math.round(raw * 100) / 100;
+                    }
+                }
+            }
+        }
+    } catch(e) {}
+    return null;
+}
 
 async function detectVideoFps(file) {
     if (!file) return 30;
     try {
-        const readSize = Math.min(file.size, 3 * 1024 * 1024);
-        const buf = await file.slice(0, readSize).arrayBuffer();
-        const u8 = new Uint8Array(buf);
-        const dv = new DataView(buf);
+        // 仅读头部 512KB (极速，绝不占用内存)
+        const headSize = Math.min(file.size, 512 * 1024);
+        const headBuf = await file.slice(0, headSize).arrayBuffer();
+        const fps = parseFpsFromChunk(headBuf);
+        if (fps) return fps;
 
-        function findTag(tag, start = 0) {
-            const b0 = tag.charCodeAt(0), b1 = tag.charCodeAt(1), b2 = tag.charCodeAt(2), b3 = tag.charCodeAt(3);
-            for (let i = start; i <= u8.length - 4; i++) {
-                if (u8[i] === b0 && u8[i+1] === b1 && u8[i+2] === b2 && u8[i+3] === b3) return i;
-            }
-            return -1;
-        }
-
-        let mdhdIdx = -1, timescale = 0, p = 0;
-        while ((p = findTag('mdhd', p)) !== -1) {
-            const version = u8[p + 4];
-            timescale = version === 0 ? dv.getUint32(p + 16) : dv.getUint32(p + 24);
-            p += 4;
-        }
-
-        const sttsIdx = findTag('stts');
-        if (sttsIdx !== -1 && timescale > 0) {
-            const entryCount = dv.getUint32(sttsIdx + 8);
-            if (entryCount > 0) {
-                const sampleDelta = dv.getUint32(sttsIdx + 16);
-                if (sampleDelta > 0) {
-                    const rawFps = timescale / sampleDelta;
-                    if (rawFps >= 5 && rawFps <= 240) {
-                        return Math.round(rawFps * 100) / 100;
-                    }
-                }
-            }
-        }
-
-        // 文件末尾探测 (针对非 faststart 封装)
-        if (file.size > readSize) {
-            const tailSize = Math.min(file.size, 3 * 1024 * 1024);
+        // 若头部无 moov (针对后置 moov 视频)，读尾部 512KB
+        if (file.size > headSize) {
+            const tailSize = Math.min(file.size, 512 * 1024);
             const tailBuf = await file.slice(file.size - tailSize).arrayBuffer();
-            const tailU8 = new Uint8Array(tailBuf);
-            const tailDv = new DataView(tailBuf);
-            function findTailTag(tag) {
-                const b0 = tag.charCodeAt(0), b1 = tag.charCodeAt(1), b2 = tag.charCodeAt(2), b3 = tag.charCodeAt(3);
-                for (let i = 0; i <= tailU8.length - 4; i++) {
-                    if (tailU8[i] === b0 && tailU8[i+1] === b1 && tailU8[i+2] === b2 && tailU8[i+3] === b3) return i;
-                }
-                return -1;
-            }
-            let tP = 0, tailTimescale = 0;
-            while ((tP = findTailTag('mdhd', tP)) !== -1) {
-                const ver = tailU8[tP + 4];
-                tailTimescale = ver === 0 ? tailDv.getUint32(tP + 16) : tailDv.getUint32(tP + 24);
-                tP += 4;
-            }
-            const tailStts = findTailTag('stts');
-            if (tailStts !== -1 && tailTimescale > 0) {
-                const entryCount = tailDv.getUint32(tailStts + 8);
-                if (entryCount > 0) {
-                    const sampleDelta = tailDv.getUint32(tailStts + 16);
-                    if (sampleDelta > 0) {
-                        const rawFps = tailTimescale / sampleDelta;
-                        if (rawFps >= 5 && rawFps <= 240) {
-                            return Math.round(rawFps * 100) / 100;
-                        }
-                    }
-                }
-            }
+            const tailFps = parseFpsFromChunk(tailBuf);
+            if (tailFps) return tailFps;
         }
-    } catch(e) {
-        console.warn('FPS 探测异常:', e);
-    }
+    } catch(e) {}
     return 30;
 }
 
@@ -742,7 +728,10 @@ const inVideo = $('inVideo');
 let videoFile = null;
 
 function loadVideoFile(file) {
-    if (!file || !file.type.startsWith('video/')) {
+    if (!file) return;
+    // 兼容各类命名与扩展名 (MP4, WebM, MOV, MKV)
+    const isVideo = file.type.startsWith('video/') || /\.(mp4|webm|mov|mkv|avi|m4v|flv)$/i.test(file.name);
+    if (!isVideo) {
         log('非有效视频格式: ' + (file?.name || ''), 'warn');
         return;
     }
@@ -753,33 +742,28 @@ function loadVideoFile(file) {
     $('inStage').classList.remove('empty');
     $('inName').textContent = file.name;
 
-    inVideo.onloadedmetadata = async () => {
-        if (!isFinite(inVideo.duration)) {
-            inVideo.currentTime = 1e7;
-            await new Promise(r => {
-                const h = () => { if (isFinite(inVideo.duration)) { inVideo.removeEventListener('durationchange', h); r(); } };
-                inVideo.addEventListener('durationchange', h);
-                setTimeout(r, 2000);
-            });
-            inVideo.currentTime = 0;
-        }
-        const d = inVideo.duration;
+    inVideo.onloadedmetadata = () => {
+        const d = isFinite(inVideo.duration) && inVideo.duration > 0 ? inVideo.duration : 10;
         const chip = $('inChip');
-        chip.textContent = `${inVideo.videoWidth}×${inVideo.videoHeight} · ${d.toFixed(1)}秒`;
+        chip.textContent = `${inVideo.videoWidth || 0}×${inVideo.videoHeight || 0} · ${d.toFixed(1)}秒`;
         initRange(d);
         $('startBtn').disabled = false;
         setStatus(`视频就绪 — ${file.name} (${inVideo.videoWidth}×${inVideo.videoHeight}, ${d.toFixed(1)}秒)，可点击「开始转换」`);
 
-        // 异步精准探测原片帧率
-        detectVideoFps(file).then(fps => {
-            detectedFps = fps;
-            const opt = $('fpsAutoOption');
-            if (opt) opt.textContent = `保持原片帧率 (推荐, 已检测: ${detectedFps} FPS)`;
-            if (!chip.textContent.includes('FPS')) {
-                chip.textContent += ` · ${detectedFps} FPS`;
-            }
-            log(`视频已解析，原片实际帧率: ${detectedFps} FPS ✓`, 'ok');
-        });
+        // 后台静默探测原片真实帧率 (完全不影响主界面操作)
+        setTimeout(() => {
+            detectVideoFps(file).then(fps => {
+                if (fps) {
+                    detectedFps = fps;
+                    const opt = $('fpsAutoOption');
+                    if (opt) opt.textContent = `保持原片帧率 (推荐, 已检测: ${detectedFps} FPS)`;
+                    if (!chip.textContent.includes('FPS')) {
+                        chip.textContent += ` · ${detectedFps} FPS`;
+                    }
+                    log(`原视频帧率解析完成: ${detectedFps} FPS ✓`, 'ok');
+                }
+            }).catch(() => {});
+        }, 30);
     };
 }
 
